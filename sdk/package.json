@@ -1,0 +1,16 @@
+{
+  "name": "addressfix",
+  "version": "0.1.0",
+  "description": "Official AddressFix API client",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": ["address", "addressfix", "api"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5"
+  },
+  "files": ["dist"]
+}
