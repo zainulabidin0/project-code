@@ -10,7 +10,12 @@ export const runtime = "nodejs";
 function verifyWebhookHmac(rawBody: string, hmac: string): boolean {
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET ?? "";
   const digest = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmac));
+  if (!digest || !hmac || digest.length !== hmac.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(digest, "utf8"), Buffer.from(hmac, "utf8"));
+  } catch {
+    return false;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -25,7 +30,7 @@ export async function POST(req: NextRequest) {
   if (topic === "app/uninstalled") {
     await db
       .update(shopifyStores)
-      .set({ isActive: false, uninstalledAt: new Date() })
+      .set({ isActive: false, authStatus: "UNINSTALLED", uninstalledAt: new Date() })
       .where(eq(shopifyStores.shopDomain, shopDomain));
   }
 

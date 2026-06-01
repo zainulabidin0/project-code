@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   const store = await getActiveStoreByDomain(shop);
   if (!store) return jsonError("NOT_FOUND", "Store not found", 404);
 
-  const res = NextResponse.json({
+  return NextResponse.json({
     success: true,
     data: {
       position: store.widgetPosition,
@@ -21,6 +21,4 @@ export async function GET(req: NextRequest) {
       storeName: store.storeName ?? store.shopDomain,
     },
   });
-  res.headers.set("Access-Control-Allow-Origin", "*");
-  return res;
 }

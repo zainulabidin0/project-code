@@ -3,8 +3,14 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects, shopifyStores } from "@/lib/db/schema";
 import { jsonError } from "@/lib/errors";
+import { encrypt } from "@/lib/shopify/encrypt";
+import {
+  fetchShopifyShopName,
+  getThemeInfo,
+  installScriptTag,
+  registerAppUninstalledWebhook,
+} from "@/lib/shopify/admin";
 import { exchangeToken, joinPublicUrl, normalizeShopHost, verifyHmac } from "@/lib/shopify/oauth";
-import { installScriptTag } from "@/lib/shopify/admin";
 
 export const runtime = "nodejs";
 
@@ -22,12 +28,38 @@ export async function GET(req: NextRequest) {
 
   let projectId = "";
   try {
-    const parsed = JSON.parse(Buffer.from(state, "base64url").toString("utf8")) as { projectId?: string };
+    const parsed = JSON.parse(Buffer.from(state, "base64url").toString("utf8")) as {
+      projectId?: string;
+    };
     projectId = parsed.projectId ?? "";
   } catch {
     return jsonError("INVALID_INPUT", "Invalid OAuth state", 400);
   }
-  if (!projectId) return jsonError("INVALID_INPUT", "Project not provided", 400);
+
+  const accessToken = await exchangeToken(shop, code);
+  const storeName = await fetchShopifyShopName(shop, accessToken).catch(() => shop);
+
+  let themeVersion: "os1" | "os2" | "unknown" = "unknown";
+  try {
+    const theme = await getThemeInfo(shop, accessToken);
+    themeVersion = theme.themeVersion;
+  } catch {
+    themeVersion = "unknown";
+  }
+
+  await registerAppUninstalledWebhook({ shop, accessToken }).catch(() => null);
+  await installScriptTag({ shop, accessToken }).catch(() => null);
+
+  const encryptedToken = encrypt(accessToken);
+
+  if (!projectId) {
+    const params = new URLSearchParams({
+      shopify_connected: shop,
+      store_name: storeName,
+      token: encryptedToken,
+    });
+    return NextResponse.redirect(joinPublicUrl(`/projects?${params.toString()}`));
+  }
 
   const project = await db
     .select({ id: projects.id })
@@ -35,9 +67,6 @@ export async function GET(req: NextRequest) {
     .where(eq(projects.id, projectId))
     .limit(1);
   if (!project[0]) return jsonError("NOT_FOUND", "Project not found", 404);
-
-  const accessToken = await exchangeToken(shop, code);
-  const storefrontToken = process.env.SHOPIFY_STOREFRONT_TOKEN ?? null;
 
   const existing = await db
     .select({ id: shopifyStores.id })
@@ -50,9 +79,11 @@ export async function GET(req: NextRequest) {
       .update(shopifyStores)
       .set({
         shopDomain: shop,
-        accessToken,
-        storefrontToken,
+        accessToken: encryptedToken,
+        storeName,
         isActive: true,
+        authStatus: "ACTIVE",
+        themeVersion,
         uninstalledAt: null,
       })
       .where(and(eq(shopifyStores.id, existing[0].id), eq(shopifyStores.projectId, projectId)));
@@ -60,11 +91,12 @@ export async function GET(req: NextRequest) {
     await db.insert(shopifyStores).values({
       projectId,
       shopDomain: shop,
-      accessToken,
-      storefrontToken,
+      accessToken: encryptedToken,
+      storeName,
+      authStatus: "ACTIVE",
+      themeVersion,
     });
   }
 
-  await installScriptTag({ shop, accessToken }).catch(() => null);
   return NextResponse.redirect(joinPublicUrl(`/projects/${projectId}/shopassist`));
 }

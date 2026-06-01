@@ -54,8 +54,12 @@ export async function GET(req: NextRequest, { params }: Params) {
     data: {
       store: store
         ? {
+            id: store.id,
             shopDomain: store.shopDomain,
             isActive: store.isActive,
+            authStatus: store.authStatus,
+            themeVersion: store.themeVersion,
+            hasStorefrontToken: Boolean(store.storefrontToken),
             widgetPosition: store.widgetPosition,
             widgetColor: store.widgetColor,
             widgetGreeting: store.widgetGreeting,
@@ -95,7 +99,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (parsed.data.disconnect) {
     await db
       .update(shopifyStores)
-      .set({ isActive: false, uninstalledAt: new Date() })
+      .set({ isActive: false, authStatus: "UNINSTALLED", uninstalledAt: new Date() })
       .where(eq(shopifyStores.id, store.id));
     return NextResponse.json({ success: true });
   }

@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jsonError } from "@/lib/errors";
 import { assertQuotaOk } from "@/lib/usage/quota";
-import { shopUsageLogs } from "@/lib/db/schema";
+import { shopChatSessions, shopUsageLogs } from "@/lib/db/schema";
 import { getActiveStoreByDomain } from "@/lib/shopify/store";
 import { getOrCreateSession, parseMessages, saveSessionMessages } from "@/lib/shopify/session";
 import { runAgent } from "@/lib/shopify/gpt-agent";
-import { searchProducts } from "@/lib/shopify/storefront";
+import {
+  buildSearchQuery,
+  searchProducts,
+  addToCart,
+  type StorefrontStore,
+} from "@/lib/shopify/storefront";
+import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
+import { parseIntent } from "@/lib/shopify/intent-parser";
 import type { SessionMessage } from "@/lib/shopify/types";
 
 export const runtime = "nodejs";
@@ -16,14 +24,6 @@ const bodySchema = z.object({
   message: z.string().min(1).max(2000),
   sessionToken: z.string().min(8),
 });
-
-export async function OPTIONS() {
-  const res = NextResponse.json({ ok: true });
-  res.headers.set("Access-Control-Allow-Origin", "*");
-  res.headers.set("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.headers.set("Access-Control-Allow-Headers", "Content-Type,X-Shop-Domain");
-  return res;
-}
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -40,7 +40,21 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return jsonError("INVALID_INPUT", parsed.error.message, 400);
 
   const store = await getActiveStoreByDomain(shopDomain);
-  if (!store || !store.storefrontToken) return jsonError("NOT_FOUND", "Shopify store is not configured", 404);
+  if (!store) {
+    return jsonError("NOT_FOUND", "Shopify store is not configured", 404);
+  }
+  if (store.authStatus === "REAUTH_REQUIRED") {
+    return jsonError("UNAUTHORIZED", "Shopify connection requires re-authentication", 401);
+  }
+  if (!getDecryptedStorefrontToken(store)) {
+    return jsonError("NOT_FOUND", "Storefront API token is not configured", 404);
+  }
+
+  const storefrontStore: StorefrontStore = {
+    id: store.id,
+    shopDomain: store.shopDomain,
+    storefrontToken: store.storefrontToken,
+  };
 
   const quota = await assertQuotaOk(store.projectId);
   if (!quota.ok) {
@@ -48,21 +62,61 @@ export async function POST(req: NextRequest) {
   }
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const session = await getOrCreateSession(store.id, parsed.data.sessionToken, ip);
+  let session = await getOrCreateSession(store.id, parsed.data.sessionToken, ip);
   const history = parseMessages(session.messages);
 
-  const products = await searchProducts(store.shopDomain, store.storefrontToken, parsed.data.message).catch(() => []);
+  const intent = await parseIntent(parsed.data.message);
+  const products =
+    intent.intent === "product_search"
+      ? await searchProducts(
+          storefrontStore,
+          intent.filters ? buildSearchQuery(intent.filters) : parsed.data.message
+        ).catch(() => [])
+      : [];
+
+  let cartAction: {
+    checkoutUrl: string;
+    totalPrice?: string | null;
+    cartId?: string;
+  } | null = null;
+
+  if (intent.intent === "add_to_cart" && intent.variantId) {
+    try {
+      const qty = Math.min(10, Math.max(1, intent.quantity ?? 1));
+      const cart = await addToCart({
+        store: storefrontStore,
+        variantId: intent.variantId,
+        quantity: qty,
+        cartId: session.cartToken,
+      });
+      await db
+        .update(shopChatSessions)
+        .set({ cartToken: cart.cartId })
+        .where(eq(shopChatSessions.id, session.id));
+      session = { ...session, cartToken: cart.cartId };
+      cartAction = {
+        checkoutUrl: cart.checkoutUrl,
+        totalPrice: cart.totalPrice,
+        cartId: cart.cartId,
+      };
+    } catch {
+      cartAction = null;
+    }
+  }
+
   const agent = await runAgent({
     storeName: store.storeName ?? store.shopDomain,
     userMessage: parsed.data.message,
     history,
     products,
+    cartAction,
+    routingIntent: intent.intent,
   });
 
   const nextMessages: SessionMessage[] = [
     ...history,
-    { role: "user", content: parsed.data.message },
-    { role: "assistant", content: agent.message },
+    { role: "user" as const, content: parsed.data.message },
+    { role: "assistant" as const, content: agent.message },
   ].slice(-20);
   await saveSessionMessages(session.id, nextMessages);
 
@@ -76,16 +130,15 @@ export async function POST(req: NextRequest) {
     status: "SUCCESS",
   });
 
-  const res = NextResponse.json({
+  return NextResponse.json({
     success: true,
     data: {
       message: agent.message,
-      intent: agent.intent,
+      intent: intent.intent,
+      intentAgent: agent.intent,
       products,
-      cartAction: null,
+      cartAction,
       sessionToken: parsed.data.sessionToken,
     },
   });
-  res.headers.set("Access-Control-Allow-Origin", "*");
-  return res;
 }

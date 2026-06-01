@@ -8,14 +8,6 @@ import { transcribeAudio } from "@/lib/shopify/whisper";
 
 export const runtime = "nodejs";
 
-export async function OPTIONS() {
-  const res = NextResponse.json({ ok: true });
-  res.headers.set("Access-Control-Allow-Origin", "*");
-  res.headers.set("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.headers.set("Access-Control-Allow-Headers", "X-Shop-Domain");
-  return res;
-}
-
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   const shopDomain = req.headers.get("x-shop-domain")?.trim() ?? "";
@@ -43,7 +35,5 @@ export async function POST(req: NextRequest) {
     status: "SUCCESS",
   });
 
-  const res = NextResponse.json({ success: true, data: { transcript } });
-  res.headers.set("Access-Control-Allow-Origin", "*");
-  return res;
+  return NextResponse.json({ success: true, data: { transcript } });
 }

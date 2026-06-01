@@ -15,6 +15,7 @@ export type ShopifyProduct = {
     id: string;
     title: string;
     available: boolean;
+    options: Array<{ name: string; value: string }>;
   }>;
 };
 

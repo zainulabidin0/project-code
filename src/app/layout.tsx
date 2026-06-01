@@ -2,6 +2,15 @@ import type { Metadata } from "next";
 import { DM_Sans, Fraunces } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { validateEnv } from "@/lib/env-check";
+
+// Skip during `next build` — NODE_ENV is production but env may be injected at deploy/runtime only.
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  validateEnv();
+}
 
 const dmSans = DM_Sans({
   subsets: ["latin"],

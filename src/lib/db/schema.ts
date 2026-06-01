@@ -242,6 +242,8 @@ export const shopifyStores = pgTable(
       .default("Hi! How can I help you today?")
       .notNull(),
     isActive: boolean("is_active").default(true).notNull(),
+    authStatus: varchar("auth_status", { length: 30 }).default("ACTIVE").notNull(),
+    themeVersion: varchar("theme_version", { length: 10 }).default("unknown").notNull(),
     installedAt: timestamp("installed_at").defaultNow().notNull(),
     uninstalledAt: timestamp("uninstalled_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
