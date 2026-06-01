@@ -24,10 +24,14 @@ const bodySchema = z.object({
   sessionToken: z.string().min(8),
 });
 
+const LOG_PREFIX = "[shopify/chat]";
+
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   const shopDomain = req.headers.get("x-shop-domain")?.trim();
   if (!shopDomain) return jsonError("INVALID_INPUT", "Missing X-Shop-Domain header", 400);
+
+  console.log(LOG_PREFIX, "request", { shopDomain });
 
   let body: unknown;
   try {
@@ -40,8 +44,15 @@ export async function POST(req: NextRequest) {
 
   const store = await getActiveStoreByDomain(shopDomain);
   if (!store) {
+    console.warn(LOG_PREFIX, "store not found", { shopDomain });
     return jsonError("NOT_FOUND", "Shopify store is not configured", 404);
   }
+  console.log(LOG_PREFIX, "store resolved", {
+    storeId: store.id,
+    shopDomain: store.shopDomain,
+    hasStorefrontToken: Boolean(store.storefrontToken),
+    authStatus: store.authStatus,
+  });
   if (store.authStatus === "REAUTH_REQUIRED") {
     return jsonError("UNAUTHORIZED", "Shopify connection requires re-authentication", 401);
   }
@@ -61,13 +72,45 @@ export async function POST(req: NextRequest) {
   const history = parseMessages(session.messages);
 
   const intent = await parseIntent(parsed.data.message);
-  const products =
-    intent.intent === "product_search"
-      ? await searchProducts(
-          storefrontStore,
-          intent.filters ? buildSearchQuery(intent.filters) : parsed.data.message
-        ).catch(() => [])
-      : [];
+  console.log(LOG_PREFIX, "intent parsed", {
+    intent: intent.intent,
+    filters: intent.filters,
+    variantId: intent.variantId,
+    quantity: intent.quantity,
+  });
+
+  let products: Awaited<ReturnType<typeof searchProducts>> = [];
+  if (intent.intent === "product_search") {
+    const storefrontQuery = intent.filters
+      ? buildSearchQuery(intent.filters)
+      : parsed.data.message;
+    console.log(LOG_PREFIX, "storefront GraphQL search starting", {
+      shopDomain: storefrontStore.shopDomain,
+      query: storefrontQuery,
+    });
+    try {
+      products = await searchProducts(storefrontStore, storefrontQuery);
+      console.log(LOG_PREFIX, "storefront GraphQL search result", {
+        count: products.length,
+        products: products.map((p) => ({
+          id: p.id,
+          title: p.title,
+          price: p.price,
+          currency: p.currency,
+          variantCount: p.variants.length,
+        })),
+      });
+    } catch (err) {
+      console.error(LOG_PREFIX, "storefront GraphQL search failed", {
+        shopDomain: storefrontStore.shopDomain,
+        query: storefrontQuery,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      products = [];
+    }
+  } else {
+    console.log(LOG_PREFIX, "storefront GraphQL skipped", { reason: "intent is not product_search" });
+  }
 
   let cartAction: {
     checkoutUrl: string;
@@ -94,7 +137,16 @@ export async function POST(req: NextRequest) {
         totalPrice: cart.totalPrice,
         cartId: cart.cartId,
       };
-    } catch {
+      console.log(LOG_PREFIX, "storefront cart updated", {
+        cartId: cart.cartId,
+        totalPrice: cart.totalPrice,
+        checkoutUrl: cart.checkoutUrl,
+      });
+    } catch (err) {
+      console.error(LOG_PREFIX, "storefront add to cart failed", {
+        variantId: intent.variantId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       cartAction = null;
     }
   }
@@ -107,6 +159,10 @@ export async function POST(req: NextRequest) {
     cartAction,
     routingIntent: intent.intent,
   });
+  console.log(LOG_PREFIX, "agent reply", {
+    intent: agent.intent,
+    messagePreview: agent.message.slice(0, 120),
+  });
 
   const nextMessages: SessionMessage[] = [
     ...history,
@@ -115,14 +171,21 @@ export async function POST(req: NextRequest) {
   ].slice(-20);
   await saveSessionMessages(session.id, nextMessages);
 
+  const processingMs = Date.now() - startedAt;
   await db.insert(shopUsageLogs).values({
     projectId: store.projectId,
     storeId: store.id,
     sessionId: session.id,
     actionType: "chat",
     tokensUsed: 0,
-    processingMs: Date.now() - startedAt,
+    processingMs,
     status: "SUCCESS",
+  });
+
+  console.log(LOG_PREFIX, "response", {
+    processingMs,
+    productCount: products.length,
+    hasCartAction: Boolean(cartAction),
   });
 
   return NextResponse.json({
