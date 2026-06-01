@@ -46,6 +46,8 @@ export async function POST(req: NextRequest) {
   if (store.authStatus === "REAUTH_REQUIRED") {
     return jsonError("UNAUTHORIZED", "Shopify connection requires re-authentication", 401);
   }
+  console.log("store", store);
+  console.log("getDecryptedStorefrontToken", getDecryptedStorefrontToken(store));
   if (!getDecryptedStorefrontToken(store)) {
     return jsonError("NOT_FOUND", "Storefront API token is not configured", 404);
   }
