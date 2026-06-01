@@ -2,6 +2,7 @@ import CryptoJS from "crypto-js";
 
 function getKey(): string {
   const key = process.env.ENCRYPTION_KEY?.trim();
+  console.log("key", key);
   if (!key) {
     throw new Error("ENCRYPTION_KEY is required for Shopify token storage");
   }
