@@ -4,6 +4,9 @@ import { shopifyStores } from "@/lib/db/schema";
 import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
 import type { ShopifyProduct } from "@/lib/shopify/types";
 
+/** Storefront API version (tokenless requires 2024-04+). */
+const STOREFRONT_API_VERSION = "2024-10";
+
 export type ParsedFilters = {
   query: string;
   color?: string;
@@ -44,7 +47,7 @@ query SearchProducts($query: String!, $first: Int!) {
           minVariantPrice { amount currencyCode }
         }
         images(first: 1) { edges { node { url } } }
-        variants(first: 20) {
+        variants(first: 10) {
           edges {
             node {
               id
@@ -93,33 +96,84 @@ async function markStoreReauthRequired(storeId: string): Promise<void> {
     .where(eq(shopifyStores.id, storeId));
 }
 
+type StorefrontGraphqlResponse<T> = {
+  data?: T;
+  errors?: Array<{ message?: string }>;
+};
+
+async function executeStorefrontRequest<T>(
+  shopDomain: string,
+  query: string,
+  variables: Record<string, unknown>,
+  accessToken: string | null
+): Promise<{ ok: true; data: T } | { ok: false; status: number; message: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (accessToken) {
+    headers["X-Shopify-Storefront-Access-Token"] = accessToken;
+  }
+
+  const res = await fetch(
+    `https://${shopDomain}/api/${STOREFRONT_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query, variables }),
+    }
+  );
+
+  if (!res.ok) {
+    return { ok: false, status: res.status, message: `Shopify API error: ${res.status}` };
+  }
+
+  const json = (await res.json()) as StorefrontGraphqlResponse<T>;
+  if (json.errors?.length) {
+    return {
+      ok: false,
+      status: 200,
+      message: json.errors[0]?.message ?? "Storefront GraphQL error",
+    };
+  }
+  if (!json.data) {
+    return { ok: false, status: 200, message: "Missing Storefront response data" };
+  }
+  return { ok: true, data: json.data };
+}
+
+/**
+ * Calls Storefront GraphQL with tokenless access first, then falls back to a saved
+ * storefront token when present. Token auth 401/403 marks the store for re-auth.
+ */
 async function storefrontFetch<T>(
   store: StorefrontStore,
   query: string,
   variables: Record<string, unknown>
 ): Promise<T> {
   const token = getDecryptedStorefrontToken(store);
-  if (!token) throw new Error("No storefront token configured");
 
-  const res = await fetch(`https://${store.shopDomain}/api/2024-01/graphql.json`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Storefront-Access-Token": token,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  const tokenless = await executeStorefrontRequest<T>(
+    store.shopDomain,
+    query,
+    variables,
+    null
+  );
+  if (tokenless.ok) return tokenless.data;
 
-  if (res.status === 401 || res.status === 403) {
-    await markStoreReauthRequired(store.id);
-    throw new Error("SHOPIFY_AUTH_REVOKED");
+  if (token) {
+    const withToken = await executeStorefrontRequest<T>(
+      store.shopDomain,
+      query,
+      variables,
+      token
+    );
+    if (withToken.ok) return withToken.data;
+
+    if (withToken.status === 401 || withToken.status === 403) {
+      await markStoreReauthRequired(store.id);
+      throw new Error("SHOPIFY_AUTH_REVOKED");
+    }
   }
-  if (!res.ok) throw new Error(`Shopify API error: ${res.status}`);
 
-  const json = (await res.json()) as { data?: T; errors?: Array<{ message?: string }> };
-  if (json.errors?.length) throw new Error(json.errors[0]?.message ?? "Storefront GraphQL error");
-  if (!json.data) throw new Error("Missing Storefront response data");
-  return json.data;
+  throw new Error(tokenless.message || "Storefront request failed");
 }
 
 function formatTotal(

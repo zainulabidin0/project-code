@@ -7,8 +7,6 @@ import { shopChatSessions } from "@/lib/db/schema";
 import { getActiveStoreByDomain } from "@/lib/shopify/store";
 import { getOrCreateSession } from "@/lib/shopify/session";
 import { addToCart, type StorefrontStore } from "@/lib/shopify/storefront";
-import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
-
 export const runtime = "nodejs";
 
 const bodySchema = z.object({
@@ -32,8 +30,8 @@ export async function POST(req: NextRequest) {
 
   const store = await getActiveStoreByDomain(shopDomain);
   if (!store) return jsonError("NOT_FOUND", "Shopify store is not configured", 404);
-  if (!getDecryptedStorefrontToken(store)) {
-    return jsonError("NOT_FOUND", "Storefront API token is not configured", 404);
+  if (store.authStatus === "REAUTH_REQUIRED") {
+    return jsonError("UNAUTHORIZED", "Shopify connection requires re-authentication", 401);
   }
   if (!parsed.data.variantId.startsWith("gid://")) {
     return jsonError("INVALID_INPUT", "Invalid variant id", 400);

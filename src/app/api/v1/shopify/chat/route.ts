@@ -14,7 +14,6 @@ import {
   addToCart,
   type StorefrontStore,
 } from "@/lib/shopify/storefront";
-import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
 import { parseIntent } from "@/lib/shopify/intent-parser";
 import type { SessionMessage } from "@/lib/shopify/types";
 
@@ -46,12 +45,6 @@ export async function POST(req: NextRequest) {
   if (store.authStatus === "REAUTH_REQUIRED") {
     return jsonError("UNAUTHORIZED", "Shopify connection requires re-authentication", 401);
   }
-  console.log("store", store);
-  console.log("getDecryptedStorefrontToken", getDecryptedStorefrontToken(store));
-  if (!getDecryptedStorefrontToken(store)) {
-    return jsonError("NOT_FOUND", "Storefront API token is not configured", 404);
-  }
-
   const storefrontStore: StorefrontStore = {
     id: store.id,
     shopDomain: store.shopDomain,

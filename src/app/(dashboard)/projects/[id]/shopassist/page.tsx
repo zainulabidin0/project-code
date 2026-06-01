@@ -35,7 +35,6 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
     if (!res.ok) return;
     const json = (await res.json()) as { data: ShopAssistPayload };
     setData(json.data);
-    if (!json.data.store?.hasStorefrontToken) setShowTokenForm(true);
   }, [authorizedFetch, id]);
 
   useEffect(() => {
@@ -171,10 +170,10 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
           </div>
 
           <div className="rounded-lg border border-zinc-800 p-4">
-            <h2 className="text-lg font-medium text-white">Storefront API token</h2>
+            <h2 className="text-lg font-medium text-white">Storefront API token (optional)</h2>
             <p className="mt-1 text-sm text-zinc-500">
-              Required for product search. Generate from Shopify Admin → Settings → Apps and sales channels →
-              Develop apps → Your app → API credentials (Storefront API).
+              Product search and cart use Shopify tokenless Storefront API by default. Save a token only if
+              tokenless fails on your store or you need token-only features (metafields, menus, etc.).
             </p>
             {data?.store?.hasStorefrontToken && !showTokenForm ? (
               <div className="mt-3 flex items-center gap-3 text-emerald-400">
@@ -207,8 +206,8 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
               </div>
             )}
             {!data?.store?.hasStorefrontToken && (
-              <p className="mt-2 text-xs text-red-400">
-                Product search will not work until a Storefront API token is saved.
+              <p className="mt-2 text-xs text-zinc-500">
+                No token saved — using tokenless Storefront access. Add a token if catalog or cart calls fail.
               </p>
             )}
           </div>
