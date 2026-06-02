@@ -255,6 +255,32 @@
     container.scrollTop = container.scrollHeight;
   }
 
+  function renderClarificationSuggestions(container, suggestions, accent, sendHandler) {
+    if (!suggestions || !suggestions.length) return;
+    var wrap = el("div", "af-suggestions");
+    wrap.style.display = "flex";
+    wrap.style.flexWrap = "wrap";
+    wrap.style.gap = "6px";
+    wrap.style.marginTop = "8px";
+    suggestions.slice(0, 4).forEach(function (label) {
+      var chip = el("button", "af-suggestion-chip", label);
+      chip.type = "button";
+      chip.style.fontSize = "12px";
+      chip.style.border = "1px solid " + accent;
+      chip.style.background = "#fff";
+      chip.style.color = accent;
+      chip.style.borderRadius = "999px";
+      chip.style.padding = "4px 10px";
+      chip.style.cursor = "pointer";
+      chip.addEventListener("click", function () {
+        sendHandler(label);
+      });
+      wrap.appendChild(chip);
+    });
+    container.appendChild(wrap);
+    container.scrollTop = container.scrollHeight;
+  }
+
   function getSupportedMimeType() {
     if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
     var types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
@@ -374,8 +400,8 @@
     }
     btn.addEventListener("click", toggle);
 
-    async function onSend() {
-      var text = input.value.trim();
+    async function onSend(prefilledText) {
+      var text = (prefilledText || input.value || "").trim();
       if (!text) return;
       input.value = "";
       appendMsg(list, "user", text);
@@ -399,6 +425,9 @@
         appendMsg(list, "assistant", msg);
         if (json.data && json.data.products && json.data.products.length) {
           renderProducts(list, json.data.products, config.color);
+        }
+        if (json.data && json.data.needsClarification && json.data.suggestions) {
+          renderClarificationSuggestions(list, json.data.suggestions, config.color, onSend);
         }
         if (json.data && json.data.cartAction && json.data.cartAction.checkoutUrl) {
           var a = document.createElement("a");

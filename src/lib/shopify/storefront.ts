@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { shopifyStores } from "@/lib/db/schema";
 import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
-import type { ShopifyProduct } from "@/lib/shopify/types";
+import type { SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
 
 /** Storefront API version (tokenless requires 2024-04+). */
 const STOREFRONT_API_VERSION = "2024-10";
@@ -22,6 +22,18 @@ export type StorefrontStore = {
   storefrontToken: string | null;
 };
 
+export type ProductSearchPlan = {
+  query: string;
+  sortKey?: SearchSortKey;
+  reverse?: boolean;
+  first?: number;
+};
+
+type ShopifyProductSortKey = "RELEVANCE" | "CREATED_AT" | "PRICE" | "BEST_SELLING";
+
+const SEARCH_KEYWORD_NOISE =
+  /\b(show|me|some|please|can|you|i|want|find|search|for|the|a|an|products?)\b/gi;
+
 export function buildSearchQuery(filters: ParsedFilters): string {
   const parts: string[] = [];
   const q = (filters.query ?? "").trim();
@@ -35,8 +47,13 @@ export function buildSearchQuery(filters: ParsedFilters): string {
 }
 
 const PRODUCT_SEARCH_QUERY = `
-query SearchProducts($query: String!, $first: Int!) {
-  products(query: $query, first: $first) {
+query SearchProducts(
+  $query: String!
+  $first: Int!
+  $sortKey: ProductSortKeys
+  $reverse: Boolean
+) {
+  products(query: $query, first: $first, sortKey: $sortKey, reverse: $reverse) {
     edges {
       node {
         id
@@ -101,11 +118,62 @@ type StorefrontGraphqlResponse<T> = {
   errors?: Array<{ message?: string }>;
 };
 
+export class StorefrontRequestError extends Error {
+  status: number;
+  bodySnippet?: string;
+  queryTried?: string;
+  source: "tokenless" | "token";
+
+  constructor(params: {
+    message: string;
+    status: number;
+    source: "tokenless" | "token";
+    bodySnippet?: string;
+    queryTried?: string;
+  }) {
+    super(params.message);
+    this.name = "StorefrontRequestError";
+    this.status = params.status;
+    this.source = params.source;
+    this.bodySnippet = params.bodySnippet;
+    this.queryTried = params.queryTried;
+  }
+}
+
+function normalizeSearchKeywords(raw: string): string {
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/gi, " ")
+    .replace(SEARCH_KEYWORD_NOISE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.slice(0, 120);
+}
+
+function mapSortKey(sortKey: SearchSortKey | undefined): ShopifyProductSortKey {
+  if (sortKey === "CREATED_AT" || sortKey === "PRICE" || sortKey === "BEST_SELLING") return sortKey;
+  return "RELEVANCE";
+}
+
+function buildSearchCandidates(plan: ProductSearchPlan): string[] {
+  const requested = (plan.query || "").trim();
+  const normalized = normalizeSearchKeywords(requested);
+  const fallbackBySort = plan.sortKey === "CREATED_AT" ? "" : "*";
+  const candidates = [requested, normalized, fallbackBySort, "*"];
+  const unique = new Set<string>();
+  for (const candidate of candidates) {
+    const value = candidate.trim();
+    if (!unique.has(value)) unique.add(value);
+  }
+  return Array.from(unique);
+}
+
 async function executeStorefrontRequest<T>(
   shopDomain: string,
-  query: string,
+  gqlQuery: string,
   variables: Record<string, unknown>,
-  accessToken: string | null
+  accessToken: string | null,
+  source: "tokenless" | "token"
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; message: string }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (accessToken) {
@@ -117,24 +185,37 @@ async function executeStorefrontRequest<T>(
     {
       method: "POST",
       headers,
-      body: JSON.stringify({ query, variables }),
+      body: JSON.stringify({ query: gqlQuery, variables }),
     }
   );
 
   if (!res.ok) {
-    return { ok: false, status: res.status, message: `Shopify API error: ${res.status}` };
+    const responseText = await res.text().catch(() => "");
+    throw new StorefrontRequestError({
+      message: `Shopify API error: ${res.status}`,
+      status: res.status,
+      source,
+      bodySnippet: responseText.slice(0, 300),
+      queryTried: JSON.stringify(variables).slice(0, 200),
+    });
   }
 
   const json = (await res.json()) as StorefrontGraphqlResponse<T>;
   if (json.errors?.length) {
-    return {
-      ok: false,
-      status: 200,
+    throw new StorefrontRequestError({
       message: json.errors[0]?.message ?? "Storefront GraphQL error",
-    };
+      status: 200,
+      source,
+      queryTried: JSON.stringify(variables).slice(0, 200),
+    });
   }
   if (!json.data) {
-    return { ok: false, status: 200, message: "Missing Storefront response data" };
+    throw new StorefrontRequestError({
+      message: "Missing Storefront response data",
+      status: 200,
+      source,
+      queryTried: JSON.stringify(variables).slice(0, 200),
+    });
   }
   return { ok: true, data: json.data };
 }
@@ -145,35 +226,105 @@ async function executeStorefrontRequest<T>(
  */
 async function storefrontFetch<T>(
   store: StorefrontStore,
-  query: string,
+  gqlQuery: string,
   variables: Record<string, unknown>
 ): Promise<T> {
   const token = getDecryptedStorefrontToken(store);
 
-  const tokenless = await executeStorefrontRequest<T>(
-    store.shopDomain,
-    query,
-    variables,
-    null
-  );
-  if (tokenless.ok) return tokenless.data;
+  try {
+    const tokenless = await executeStorefrontRequest<T>(
+      store.shopDomain,
+      gqlQuery,
+      variables,
+      null,
+      "tokenless"
+    );
+    if (tokenless.ok) return tokenless.data;
+  } catch (error) {
+    if (!token) throw error;
+  }
 
   if (token) {
-    const withToken = await executeStorefrontRequest<T>(
-      store.shopDomain,
-      query,
-      variables,
-      token
-    );
-    if (withToken.ok) return withToken.data;
-
-    if (withToken.status === 401 || withToken.status === 403) {
-      await markStoreReauthRequired(store.id);
-      throw new Error("SHOPIFY_AUTH_REVOKED");
+    try {
+      const withToken = await executeStorefrontRequest<T>(
+        store.shopDomain,
+        gqlQuery,
+        variables,
+        token,
+        "token"
+      );
+      if (withToken.ok) return withToken.data;
+    } catch (error) {
+      if (error instanceof StorefrontRequestError && (error.status === 401 || error.status === 403)) {
+        await markStoreReauthRequired(store.id);
+        throw new Error("SHOPIFY_AUTH_REVOKED");
+      }
+      throw error;
     }
   }
 
-  throw new Error(tokenless.message || "Storefront request failed");
+  throw new Error("Storefront request failed");
+}
+
+type ShopifySearchProductsResponse = {
+  products: {
+    edges: Array<{
+      node: {
+        id: string;
+        title: string;
+        description: string;
+        handle: string;
+        priceRange: { minVariantPrice: { amount: string; currencyCode: string } };
+        images: { edges: Array<{ node: { url: string } }> };
+        variants: {
+          edges: Array<{
+            node: {
+              id: string;
+              title: string;
+              availableForSale: boolean;
+              selectedOptions: Array<{ name: string; value: string }>;
+            };
+          }>;
+        };
+      };
+    }>;
+  };
+};
+
+function mapProducts(shopDomain: string, data: ShopifySearchProductsResponse): ShopifyProduct[] {
+  return data.products.edges.map(({ node }) => ({
+    id: node.id,
+    title: node.title,
+    description: node.description,
+    price: node.priceRange.minVariantPrice.amount,
+    currency: node.priceRange.minVariantPrice.currencyCode,
+    image: node.images.edges[0]?.node.url ?? null,
+    url: `https://${shopDomain}/products/${node.handle}`,
+    variants: node.variants.edges.map(({ node: v }) => ({
+      id: v.id,
+      title: v.title,
+      available: v.availableForSale,
+      options: v.selectedOptions.map((o) => ({ name: o.name, value: o.value })),
+    })),
+  }));
+}
+
+function isRecoverableSearchError(error: unknown): error is StorefrontRequestError {
+  if (!(error instanceof StorefrontRequestError)) return false;
+  if (error.status === 400) return true;
+  return /parse|syntax|invalid|bad request|query/i.test(error.message);
+}
+
+function toProductSearchPlan(input: string | ProductSearchPlan): ProductSearchPlan {
+  if (typeof input === "string") {
+    return { query: input, sortKey: "RELEVANCE", reverse: false, first: 5 };
+  }
+  return {
+    query: input.query,
+    sortKey: input.sortKey ?? "RELEVANCE",
+    reverse: input.reverse ?? false,
+    first: input.first ?? 5,
+  };
 }
 
 function formatTotal(
@@ -184,47 +335,34 @@ function formatTotal(
   return `${cost.totalAmount.amount} ${cur}`.trim();
 }
 
-export async function searchProducts(store: StorefrontStore, query: string): Promise<ShopifyProduct[]> {
-  const data = await storefrontFetch<{
-    products: {
-      edges: Array<{
-        node: {
-          id: string;
-          title: string;
-          description: string;
-          handle: string;
-          priceRange: { minVariantPrice: { amount: string; currencyCode: string } };
-          images: { edges: Array<{ node: { url: string } }> };
-          variants: {
-            edges: Array<{
-              node: {
-                id: string;
-                title: string;
-                availableForSale: boolean;
-                selectedOptions: Array<{ name: string; value: string }>;
-              };
-            }>;
-          };
-        };
-      }>;
-    };
-  }>(store, PRODUCT_SEARCH_QUERY, { query, first: 5 });
+export async function searchProducts(
+  store: StorefrontStore,
+  input: string | ProductSearchPlan
+): Promise<ShopifyProduct[]> {
+  const plan = toProductSearchPlan(input);
+  const sortKey = mapSortKey(plan.sortKey);
+  const reverse = Boolean(plan.reverse);
+  const first = plan.first ?? 5;
+  const candidates = buildSearchCandidates(plan);
 
-  return data.products.edges.map(({ node }) => ({
-    id: node.id,
-    title: node.title,
-    description: node.description,
-    price: node.priceRange.minVariantPrice.amount,
-    currency: node.priceRange.minVariantPrice.currencyCode,
-    image: node.images.edges[0]?.node.url ?? null,
-    url: `https://${store.shopDomain}/products/${node.handle}`,
-    variants: node.variants.edges.map(({ node: v }) => ({
-      id: v.id,
-      title: v.title,
-      available: v.availableForSale,
-      options: v.selectedOptions.map((o) => ({ name: o.name, value: o.value })),
-    })),
-  }));
+  let lastError: unknown;
+  for (const queryCandidate of candidates) {
+    try {
+      const data = await storefrontFetch<ShopifySearchProductsResponse>(store, PRODUCT_SEARCH_QUERY, {
+        query: queryCandidate,
+        first,
+        sortKey,
+        reverse,
+      });
+      return mapProducts(store.shopDomain, data);
+    } catch (error) {
+      lastError = error;
+      if (!isRecoverableSearchError(error)) throw error;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return [];
 }
 
 export async function addToCart(params: {

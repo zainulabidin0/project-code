@@ -590,7 +590,7 @@ async function sendMessage(text) {
   });
   const json = await res.json();
   if (!json.success) throw new Error(json.error.message);
-  return json.data; // { message, intent, products, sessionToken }
+  return json.data; // { message, intent, products, needsClarification?, suggestions?, sessionToken }
 }
 </script>`,
     react: `// React (browser-safe — no API key required)
@@ -612,7 +612,7 @@ export async function sendChat(shop: string, message: string) {
   });
   const json = await res.json();
   if (!json.success) throw new Error(json.error?.message);
-  return json.data;
+  return json.data; // supports clarification payload: needsClarification + suggestions
 }`,
     nextjs: `// app/actions/shop-chat.ts
 "use server";
@@ -628,7 +628,7 @@ export async function shopChat(shop: string, message: string, sessionToken: stri
   });
   const json = await res.json();
   if (!json.success) throw new Error(json.error?.message);
-  return json.data;
+  return json.data; // supports clarification payload: needsClarification + suggestions
 }`,
   };
 }

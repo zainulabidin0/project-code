@@ -9,12 +9,14 @@ import { getActiveStoreByDomain } from "@/lib/shopify/store";
 import { getOrCreateSession, parseMessages, saveSessionMessages } from "@/lib/shopify/session";
 import { runAgent } from "@/lib/shopify/gpt-agent";
 import {
-  buildSearchQuery,
+  type ProductSearchPlan,
+  StorefrontRequestError,
   searchProducts,
   addToCart,
   type StorefrontStore,
 } from "@/lib/shopify/storefront";
 import { parseIntent } from "@/lib/shopify/intent-parser";
+import { recoverSearchPlan } from "@/lib/shopify/query-recovery";
 import type { SessionMessage } from "@/lib/shopify/types";
 
 export const runtime = "nodejs";
@@ -25,6 +27,15 @@ const bodySchema = z.object({
 });
 
 const LOG_PREFIX = "[shopify/chat]";
+
+function mapIntentToQuery(plan: Awaited<ReturnType<typeof parseIntent>>, fallbackMessage: string): ProductSearchPlan {
+  return {
+    query: plan.shopifyQuery || plan.filters?.query || fallbackMessage,
+    sortKey: plan.sortKey,
+    reverse: plan.reverse,
+    first: 5,
+  };
+}
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -75,21 +86,29 @@ export async function POST(req: NextRequest) {
   console.log(LOG_PREFIX, "intent parsed", {
     intent: intent.intent,
     filters: intent.filters,
+    shopifyQuery: intent.shopifyQuery,
+    sortKey: intent.sortKey,
+    reverse: intent.reverse,
+    confidence: intent.confidence,
+    needsClarification: intent.needsClarification,
     variantId: intent.variantId,
     quantity: intent.quantity,
   });
 
   let products: Awaited<ReturnType<typeof searchProducts>> = [];
-  if (intent.intent === "product_search") {
-    const storefrontQuery = intent.filters
-      ? buildSearchQuery(intent.filters)
-      : parsed.data.message;
+  let usedSearchQuery: string | null = null;
+  let recovered = false;
+  let clarification = intent.clarification;
+  if (intent.intent === "product_search" && !intent.needsClarification) {
+    const searchPlan = mapIntentToQuery(intent, parsed.data.message);
+    const storefrontQuery = searchPlan.query;
+    usedSearchQuery = storefrontQuery;
     console.log(LOG_PREFIX, "storefront GraphQL search starting", {
       shopDomain: storefrontStore.shopDomain,
-      query: storefrontQuery,
+      plan: searchPlan,
     });
     try {
-      products = await searchProducts(storefrontStore, storefrontQuery);
+      products = await searchProducts(storefrontStore, searchPlan);
       console.log(LOG_PREFIX, "storefront GraphQL search result", {
         count: products.length,
         products: products.map((p) => ({
@@ -105,11 +124,57 @@ export async function POST(req: NextRequest) {
         shopDomain: storefrontStore.shopDomain,
         query: storefrontQuery,
         error: err instanceof Error ? err.message : String(err),
+        status: err instanceof StorefrontRequestError ? err.status : undefined,
+        bodySnippet: err instanceof StorefrontRequestError ? err.bodySnippet : undefined,
       });
-      products = [];
+
+      if (err instanceof StorefrontRequestError && err.status === 400) {
+        const recovery = await recoverSearchPlan({
+          userMessage: parsed.data.message,
+          initialPlan: intent,
+          failedQuery: storefrontQuery,
+          errorMessage: err.message,
+        });
+        console.log(LOG_PREFIX, "search recovery result", recovery);
+        if (recovery.status === "rewritten") {
+          try {
+            recovered = true;
+            usedSearchQuery = recovery.plan.shopifyQuery ?? usedSearchQuery;
+            products = await searchProducts(storefrontStore, {
+              query: recovery.plan.shopifyQuery || parsed.data.message,
+              sortKey: recovery.plan.sortKey,
+              reverse: recovery.plan.reverse,
+              first: 5,
+            });
+            clarification = undefined;
+            console.log(LOG_PREFIX, "storefront GraphQL recovery success", {
+              count: products.length,
+              query: recovery.plan.shopifyQuery,
+              sortKey: recovery.plan.sortKey,
+              reverse: recovery.plan.reverse,
+            });
+          } catch (retryErr) {
+            console.error(LOG_PREFIX, "storefront GraphQL recovery failed", {
+              error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+            });
+            products = [];
+            clarification = intent.clarification;
+          }
+        } else {
+          clarification = recovery.clarification;
+          products = [];
+        }
+      } else {
+        products = [];
+      }
     }
   } else {
-    console.log(LOG_PREFIX, "storefront GraphQL skipped", { reason: "intent is not product_search" });
+    console.log(LOG_PREFIX, "storefront GraphQL skipped", {
+      reason:
+        intent.intent !== "product_search"
+          ? "intent is not product_search"
+          : "plan requires clarification",
+    });
   }
 
   let cartAction: {
@@ -158,6 +223,8 @@ export async function POST(req: NextRequest) {
     products,
     cartAction,
     routingIntent: intent.intent,
+    resultMode: clarification ? "clarification" : products.length > 0 ? "success" : "partial",
+    clarification,
   });
   console.log(LOG_PREFIX, "agent reply", {
     intent: agent.intent,
@@ -186,6 +253,9 @@ export async function POST(req: NextRequest) {
     processingMs,
     productCount: products.length,
     hasCartAction: Boolean(cartAction),
+    needsClarification: Boolean(clarification),
+    recovered,
+    usedSearchQuery,
   });
 
   return NextResponse.json({
@@ -196,6 +266,15 @@ export async function POST(req: NextRequest) {
       intentAgent: agent.intent,
       products,
       cartAction,
+      needsClarification: Boolean(clarification),
+      clarificationQuestion: clarification?.question,
+      suggestions: clarification?.suggestions ?? [],
+      agentTrace: {
+        intent: intent.intent,
+        usedQuery: usedSearchQuery,
+        sortKey: intent.sortKey ?? null,
+        recovered,
+      },
       sessionToken: parsed.data.sessionToken,
     },
   });

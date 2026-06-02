@@ -332,6 +332,21 @@ X-Shop-Domain: mystore.myshopify.com`}
                         "string",
                         "Redirect target after successful cart add",
                       ],
+                      [
+                        "needsClarification",
+                        "boolean",
+                        "True when the assistant needs user confirmation after query recovery.",
+                      ],
+                      [
+                        "clarificationQuestion",
+                        "string",
+                        "Follow-up question shown when search/cart intent is ambiguous or invalid.",
+                      ],
+                      [
+                        "suggestions",
+                        "string[]",
+                        "Clickable suggestion chips the widget can send as the next message.",
+                      ],
                     ].map(([field, type, desc]) => (
                       <tr key={field} className="text-zinc-400">
                         <td className="px-4 py-2.5">

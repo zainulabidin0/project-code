@@ -4,7 +4,13 @@ import { getGroqKey, groqChatCompletion, GROQ_CHAT_MODEL } from "@/lib/groq/clie
 
 function buildSystemPrompt(
   storeName: string,
-  opts: { routingIntent?: string; cartHint?: string }
+  opts: {
+    routingIntent?: string;
+    cartHint?: string;
+    resultMode?: "success" | "clarification" | "partial";
+    clarificationQuestion?: string;
+    suggestions?: string[];
+  }
 ): string {
   let rules = `You are a shopping assistant for ${storeName}.
 Respond with strict JSON:
@@ -28,6 +34,16 @@ Rules:
   if (opts.cartHint) {
     rules += `\n- ${opts.cartHint}`;
   }
+  if (opts.resultMode === "clarification") {
+    rules +=
+      "\n- Execution needs clarification. Ask one short question and provide suggestions in plain language.";
+  }
+  if (opts.clarificationQuestion) {
+    rules += `\n- Clarification question to ask: ${opts.clarificationQuestion}`;
+  }
+  if (opts.suggestions?.length) {
+    rules += `\n- Suggest these options: ${opts.suggestions.join(" | ")}`;
+  }
   return rules;
 }
 
@@ -38,6 +54,8 @@ export async function runAgent(params: {
   products: ShopifyProduct[];
   cartAction?: { checkoutUrl: string; totalPrice?: string | null } | null;
   routingIntent?: string;
+  resultMode?: "success" | "clarification" | "partial";
+  clarification?: { question: string; suggestions: string[] };
 }) {
   if (!getGroqKey()) {
     if (params.products.length > 0) {
@@ -76,6 +94,9 @@ export async function runAgent(params: {
       content: buildSystemPrompt(params.storeName, {
         routingIntent: params.routingIntent,
         cartHint,
+        resultMode: params.resultMode,
+        clarificationQuestion: params.clarification?.question,
+        suggestions: params.clarification?.suggestions,
       }),
     },
     ...params.history.map((m) => ({ role: m.role, content: m.content })),
