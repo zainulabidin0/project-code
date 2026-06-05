@@ -2,14 +2,23 @@ import type { SessionMessage, ShopifyProduct } from "@/lib/shopify/types";
 import { parseAgentResponse } from "@/lib/shopify/intent-parser";
 import { getGroqKey, groqChatCompletion, GROQ_CHAT_MODEL } from "@/lib/groq/client";
 
+function buildNoResultsMessage(storeName: string, searchedQuery?: string | null): string {
+  const item = searchedQuery?.trim();
+  if (item) {
+    return `I checked our catalog at ${storeName} and couldn't find anything matching "${item}". We don't sell that item. If you'd like, tell me what you're looking for and I can suggest something similar.`;
+  }
+  return `I checked our catalog at ${storeName} and couldn't find anything matching that. We don't sell that item. If you'd like, tell me what you're looking for and I can suggest something similar.`;
+}
+
 function buildSystemPrompt(
   storeName: string,
   opts: {
     routingIntent?: string;
     cartHint?: string;
-    resultMode?: "success" | "clarification" | "partial";
+    resultMode?: "success" | "clarification" | "partial" | "no_results";
     clarificationQuestion?: string;
     suggestions?: string[];
+    searchedQuery?: string | null;
   }
 ): string {
   let rules = `You are a shopping assistant for ${storeName}.
@@ -38,6 +47,20 @@ Rules:
     rules +=
       "\n- Execution needs clarification. Ask one short question and provide suggestions in plain language.";
   }
+  if (opts.resultMode === "no_results") {
+    const searched = opts.searchedQuery?.trim();
+    rules +=
+      "\n- The product search has ALREADY finished. The Product context array is empty — no matching items exist in this store's catalog.";
+    rules +=
+      "\n- Do NOT say you are searching, looking, checking, or fetching. The search is complete.";
+    rules +=
+      "\n- Clearly tell the shopper we could not find that item and we do not sell it.";
+    if (searched) {
+      rules += `\n- The shopper searched for: "${searched}". Reference this naturally in your reply.`;
+    }
+    rules +=
+      "\n- Offer to help find something similar, but keep the reply short and realistic.";
+  }
   if (opts.clarificationQuestion) {
     rules += `\n- Clarification question to ask: ${opts.clarificationQuestion}`;
   }
@@ -54,9 +77,26 @@ export async function runAgent(params: {
   products: ShopifyProduct[];
   cartAction?: { checkoutUrl: string; totalPrice?: string | null } | null;
   routingIntent?: string;
-  resultMode?: "success" | "clarification" | "partial";
+  resultMode?: "success" | "clarification" | "partial" | "no_results";
   clarification?: { question: string; suggestions: string[] };
+  searchedQuery?: string | null;
 }) {
+  if (
+    params.resultMode === "no_results" ||
+    (params.routingIntent === "product_search" &&
+      params.products.length === 0 &&
+      params.resultMode !== "clarification")
+  ) {
+    if (!getGroqKey()) {
+      return parseAgentResponse(
+        JSON.stringify({
+          intent: "product_search",
+          message: buildNoResultsMessage(params.storeName, params.searchedQuery),
+        })
+      );
+    }
+  }
+
   if (!getGroqKey()) {
     if (params.products.length > 0) {
       return parseAgentResponse(
@@ -97,6 +137,7 @@ export async function runAgent(params: {
         resultMode: params.resultMode,
         clarificationQuestion: params.clarification?.question,
         suggestions: params.clarification?.suggestions,
+        searchedQuery: params.searchedQuery,
       }),
     },
     ...params.history.map((m) => ({ role: m.role, content: m.content })),
@@ -114,6 +155,14 @@ export async function runAgent(params: {
   });
 
   if (!result.ok) {
+    if (params.resultMode === "no_results") {
+      return parseAgentResponse(
+        JSON.stringify({
+          intent: "product_search",
+          message: buildNoResultsMessage(params.storeName, params.searchedQuery),
+        })
+      );
+    }
     return parseAgentResponse(
       JSON.stringify({
         intent: "chitchat",
@@ -122,5 +171,21 @@ export async function runAgent(params: {
     );
   }
 
-  return parseAgentResponse(result.content);
+  const agent = parseAgentResponse(result.content);
+
+  if (
+    params.resultMode === "no_results" &&
+    /\b(searching|looking for|let me (find|search|look)|i('ll| will) (search|look|find))\b/i.test(
+      agent.message
+    )
+  ) {
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "product_search",
+        message: buildNoResultsMessage(params.storeName, params.searchedQuery),
+      })
+    );
+  }
+
+  return agent;
 }

@@ -216,6 +216,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const resultMode =
+    clarification
+      ? "clarification"
+      : intent.intent === "product_search" && products.length === 0
+        ? "no_results"
+        : products.length > 0
+          ? "success"
+          : "partial";
+
   const agent = await runAgent({
     storeName: store.storeName ?? store.shopDomain,
     userMessage: parsed.data.message,
@@ -223,8 +232,9 @@ export async function POST(req: NextRequest) {
     products,
     cartAction,
     routingIntent: intent.intent,
-    resultMode: clarification ? "clarification" : products.length > 0 ? "success" : "partial",
+    resultMode,
     clarification,
+    searchedQuery: usedSearchQuery,
   });
   console.log(LOG_PREFIX, "agent reply", {
     intent: agent.intent,
