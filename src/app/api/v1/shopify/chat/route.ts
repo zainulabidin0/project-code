@@ -51,6 +51,58 @@ function pickDefaultVariant(product: ShopifyProduct): string | undefined {
   return available.length === 1 ? available[0].id : undefined;
 }
 
+function applySearchResultsToContext(
+  products: ShopifyProduct[],
+  usedSearchQuery: string | null,
+  priorContext: ReturnType<typeof parseSessionContext>
+): ChatSessionContext {
+  if (products.length === 0) {
+    return {
+      stage: "no_results",
+      lastSearchQuery: usedSearchQuery ?? priorContext.lastSearchQuery,
+      lastProducts: undefined,
+      selectedProduct: undefined,
+      selectedVariantId: undefined,
+    };
+  }
+  if (products.length === 1) {
+    const single = products[0];
+    const variantId = pickDefaultVariant(single);
+    return {
+      stage: variantId ? "awaiting_confirm" : "presenting_options",
+      lastProducts: products,
+      lastSearchQuery: usedSearchQuery ?? undefined,
+      selectedProduct: single,
+      selectedVariantId: variantId,
+    };
+  }
+  return {
+    stage: "presenting_options",
+    lastProducts: products,
+    lastSearchQuery: usedSearchQuery ?? undefined,
+    selectedProduct: undefined,
+    selectedVariantId: undefined,
+  };
+}
+
+function catalogBackedClarification(
+  clarification: Awaited<ReturnType<typeof parseIntent>>["clarification"],
+  products: ShopifyProduct[],
+  selectedProduct?: ShopifyProduct
+) {
+  if (!clarification) return undefined;
+  if (selectedProduct) {
+    const variantTitles = new Set(
+      selectedProduct.variants.filter((v) => v.available).map((v) => v.title)
+    );
+    if (clarification.suggestions.every((s) => variantTitles.has(s))) {
+      return clarification;
+    }
+  }
+  if (products.length === 0) return undefined;
+  return clarification;
+}
+
 async function runProductSearch(
   storefrontStore: StorefrontStore,
   intent: Awaited<ReturnType<typeof parseIntent>>,
@@ -59,12 +111,10 @@ async function runProductSearch(
   products: ShopifyProduct[];
   usedSearchQuery: string | null;
   recovered: boolean;
-  clarification: Awaited<ReturnType<typeof parseIntent>>["clarification"];
 }> {
   let products: ShopifyProduct[] = [];
   let usedSearchQuery: string | null = null;
   let recovered = false;
-  let clarification = intent.clarification;
 
   const searchPlan = mapIntentToQuery(intent, userMessage);
   const storefrontQuery = searchPlan.query;
@@ -114,16 +164,13 @@ async function runProductSearch(
             reverse: recovery.plan.reverse,
             first: 5,
           });
-          clarification = undefined;
         } catch (retryErr) {
           console.error(LOG_PREFIX, "storefront GraphQL recovery failed", {
             error: retryErr instanceof Error ? retryErr.message : String(retryErr),
           });
           products = [];
-          clarification = intent.clarification;
         }
       } else {
-        clarification = recovery.clarification;
         products = [];
       }
     } else {
@@ -131,7 +178,7 @@ async function runProductSearch(
     }
   }
 
-  return { products, usedSearchQuery, recovered, clarification };
+  return { products, usedSearchQuery, recovered };
 }
 
 export async function POST(req: NextRequest) {
@@ -204,32 +251,26 @@ export async function POST(req: NextRequest) {
     products = searchResult.products;
     usedSearchQuery = searchResult.usedSearchQuery;
     recovered = searchResult.recovered;
-    clarification = searchResult.clarification;
-
-    if (products.length === 0) {
-      sessionContext = {
-        stage: "greeting",
-        lastSearchQuery: usedSearchQuery ?? undefined,
-      };
-    } else if (products.length === 1) {
-      const single = products[0];
-      const variantId = pickDefaultVariant(single);
-      sessionContext = {
-        stage: variantId ? "awaiting_confirm" : "presenting_options",
-        lastProducts: products,
-        lastSearchQuery: usedSearchQuery ?? undefined,
-        selectedProduct: single,
-        selectedVariantId: variantId,
-      };
-    } else {
-      sessionContext = {
-        stage: "presenting_options",
-        lastProducts: products,
-        lastSearchQuery: usedSearchQuery ?? undefined,
-        selectedProduct: undefined,
-        selectedVariantId: undefined,
-      };
-    }
+    clarification = undefined;
+    sessionContext = applySearchResultsToContext(products, usedSearchQuery, sessionContext);
+  } else if (intent.intent === "browse_alternatives") {
+    const searchResult = await runProductSearch(
+      storefrontStore,
+      {
+        intent: "browse_alternatives",
+        shopifyQuery: "*",
+        sortKey: intent.sortKey ?? "BEST_SELLING",
+        reverse: intent.reverse ?? false,
+        confidence: "high",
+        needsClarification: false,
+      },
+      parsed.data.message
+    );
+    products = searchResult.products;
+    usedSearchQuery = "popular products";
+    recovered = searchResult.recovered;
+    clarification = undefined;
+    sessionContext = applySearchResultsToContext(products, usedSearchQuery, sessionContext);
   } else if (intent.intent === "select_product") {
     const catalog = sessionContext.lastProducts ?? [];
     const selection = resolveProductSelection(parsed.data.message, catalog, {
@@ -334,6 +375,12 @@ export async function POST(req: NextRequest) {
         : [];
   }
 
+  clarification = catalogBackedClarification(
+    clarification,
+    products,
+    sessionContext.selectedProduct
+  );
+
   let resultMode:
     | "success"
     | "clarification"
@@ -344,16 +391,21 @@ export async function POST(req: NextRequest) {
     | "confirm_offer"
     | "cart_added" = "partial";
 
-  if (clarification) {
-    resultMode = "clarification";
+  if (cartAction) {
+    resultMode = "cart_added";
   } else if (intent.intent === "chitchat" && sessionContext.stage === "greeting" && history.length === 0) {
     resultMode = "greeting";
-  } else if (cartAction) {
-    resultMode = "cart_added";
   } else if (sessionContext.stage === "awaiting_confirm" && sessionContext.selectedProduct) {
     resultMode = "confirm_offer";
-  } else if (intent.intent === "product_search" && products.length === 0) {
+  } else if (
+    (intent.intent === "product_search" || sessionContext.stage === "no_results") &&
+    products.length === 0
+  ) {
     resultMode = "no_results";
+  } else if (intent.intent === "browse_alternatives" && products.length > 0) {
+    resultMode = products.length > 1 ? "multi_results" : "success";
+  } else if (clarification) {
+    resultMode = "clarification";
   } else if (products.length > 1) {
     resultMode = "multi_results";
   } else if (products.length === 1) {

@@ -193,9 +193,23 @@ export function resolveVariantFromMessage(
 
 export function isConfirmYes(message: string): boolean {
   const text = message.trim().toLowerCase();
-  return /^(yes|yeah|yep|yup|sure|ok|okay|add it|add to cart|please do|go ahead|do it|confirm|absolutely|definitely)\b/.test(
+  return /^(yes|yeah|yep|yup|ok|okay|add it|add to cart|please do|go ahead|do it|confirm|absolutely|definitely)\b/.test(
     text
   );
+}
+
+/** Shopper wants to see real catalog items after a failed search. */
+export function isBrowseAlternativesRequest(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  if (/^(yes|yeah|yep|yup|sure|ok|okay)[!.?\s]*$/.test(text)) return true;
+  if (
+    /\b(show me|what else|something else|something similar|other products|alternatives|what do you have|what you have|else you have|more options|popular products|best selling|latest products|browse|look around|see what you have)\b/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function isVagueGreeting(message: string): boolean {

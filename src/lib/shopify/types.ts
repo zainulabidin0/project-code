@@ -24,6 +24,7 @@ export type ShopifyProduct = {
 
 export type ConversationStage =
   | "greeting"
+  | "no_results"
   | "presenting_options"
   | "awaiting_confirm"
   | "completed";
@@ -38,6 +39,7 @@ export type ChatSessionContext = {
 
 export type AgentIntent =
   | "product_search"
+  | "browse_alternatives"
   | "select_product"
   | "confirm_add_to_cart"
   | "add_to_cart"

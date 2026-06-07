@@ -10,6 +10,7 @@ import type {
 import type { ParsedFilters } from "@/lib/shopify/storefront";
 import { getGroqKey, groqChatCompletion, GROQ_INTENT_MODEL } from "@/lib/groq/client";
 import {
+  isBrowseAlternativesRequest,
   isConfirmYes,
   isVagueGreeting,
   resolveProductSelection,
@@ -50,6 +51,7 @@ function coerceIntent(value: unknown): ParsedIntent["intent"] {
   const v = typeof value === "string" ? value : "";
   if (
     v === "product_search" ||
+    v === "browse_alternatives" ||
     v === "select_product" ||
     v === "confirm_add_to_cart" ||
     v === "add_to_cart" ||
@@ -179,6 +181,16 @@ function ruleBasedIntent(message: string, opts?: ParseIntentOptions): ParsedInte
     };
   }
 
+  if (context?.stage === "no_results" && isBrowseAlternativesRequest(trimmed)) {
+    return {
+      intent: "browse_alternatives",
+      sortKey: "BEST_SELLING",
+      reverse: false,
+      confidence: "high",
+      needsClarification: false,
+    };
+  }
+
   if (context?.selectedProduct && !context.selectedVariantId) {
     const variantId = resolveVariantFromMessage(trimmed, context.selectedProduct);
     if (variantId) {
@@ -238,7 +250,8 @@ function buildIntentSystemPrompt(context?: ChatSessionContext): string {
 Reply with ONLY a JSON object (no markdown).
 
 Intents:
-- product_search: browse/find products
+- product_search: browse/find products by keyword
+- browse_alternatives: shopper wants to see other/popular products after a failed search (use when stage is no_results and they say yes/show me something else)
 - select_product: shopper picks from previously shown products (include productIndex 0-based or productTitle)
 - confirm_add_to_cart: shopper confirms yes/add it when a product was already selected
 - add_to_cart: user wants to add a specific item (include variantId if they pasted a Shopify GID like gid://shopify/ProductVariant/...)
@@ -258,12 +271,14 @@ For select_product include:
 - productTitle: string when obvious
 
 Rules:
+- If stage is no_results and user agrees to see other items or asks what else you have, use browse_alternatives (NOT product_search with invented subcategories)
 - If stage is presenting_options and user picks an item, use select_product
-- If stage is awaiting_confirm and user says yes/sure/add it, use confirm_add_to_cart
+- If stage is awaiting_confirm and user says yes/add it, use confirm_add_to_cart
+- NEVER set needsClarification with product-type suggestions unless those products are already listed in context Products shown
+- Do NOT invent product categories the store may not carry
 - "new/latest/recent" => sortKey=CREATED_AT and reverse=true
 - "cheap/lowest price" => sortKey=PRICE and reverse=false
-- If unclear, set needsClarification=true with clarification.question and 2-4 suggestions.
-- If add_to_cart but no variantId, set needsClarification=true.
+- If add_to_cart but no variantId, set needsClarification=true with variant options only
 - confidence: low | medium | high
 
 ${contextBlock ? `Session context:\n${contextBlock}` : ""}`;
@@ -388,27 +403,41 @@ export async function parseIntent(message: string, opts?: ParseIntentOptions): P
     }
 
     if (intent === "product_search" && !normalizedQuery && !needsClarification) {
+      if (opts?.context?.stage === "no_results" && isBrowseAlternativesRequest(trimmed)) {
+        return {
+          intent: "browse_alternatives",
+          sortKey: "BEST_SELLING",
+          reverse: false,
+          confidence: "high",
+          needsClarification: false,
+        };
+      }
       return {
         ...buildFallbackPlan(trimmed),
-        needsClarification: true,
-        clarification: defaultClarification(trimmed),
+        needsClarification: false,
       };
     }
+
+    const hasCatalog = Boolean(opts?.context?.lastProducts?.length);
+    const allowClarification =
+      needsClarification &&
+      (hasCatalog ||
+        (intent === "select_product" && Boolean(opts?.context?.selectedProduct)));
 
     return {
       intent,
       filters: filters ?? (intent === "product_search" ? { query: normalizedQuery || "products" } : undefined),
       shopifyQuery: intent === "product_search" ? normalizedQuery || "products" : undefined,
-      sortKey: intent === "product_search" ? sortKey : undefined,
-      reverse: intent === "product_search" ? reverse : undefined,
+      sortKey: intent === "product_search" || intent === "browse_alternatives" ? sortKey : undefined,
+      reverse: intent === "product_search" || intent === "browse_alternatives" ? reverse : undefined,
       variantId,
       productIndex,
       productTitle,
       quantity,
       confidence,
-      needsClarification,
+      needsClarification: allowClarification,
       clarification:
-        needsClarification
+        allowClarification
           ? {
               question: clarificationQuestion || defaultClarification(trimmed).question,
               suggestions:
@@ -419,6 +448,15 @@ export async function parseIntent(message: string, opts?: ParseIntentOptions): P
           : undefined,
     };
   } catch {
+    if (opts?.context?.stage === "no_results" && isBrowseAlternativesRequest(trimmed)) {
+      return {
+        intent: "browse_alternatives",
+        sortKey: "BEST_SELLING",
+        reverse: false,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
     return buildFallbackPlan(trimmed);
   }
 }

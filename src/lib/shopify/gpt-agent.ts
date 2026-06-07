@@ -5,9 +5,9 @@ import { getGroqKey, groqChatCompletion, GROQ_CHAT_MODEL } from "@/lib/groq/clie
 function buildNoResultsMessage(storeName: string, searchedQuery?: string | null): string {
   const item = searchedQuery?.trim();
   if (item) {
-    return `I checked our catalog at ${storeName} and couldn't find anything matching "${item}". We don't sell that item. If you'd like, tell me what you're looking for and I can suggest something similar.`;
+    return `I checked ${storeName} and we don't sell "${item}". Would you like me to show you some popular items from our store instead?`;
   }
-  return `I checked our catalog at ${storeName} and couldn't find anything matching that. We don't sell that item. If you'd like, tell me what you're looking for and I can suggest something similar.`;
+  return `I checked ${storeName} and we don't have that item. Would you like me to show you some popular items from our store instead?`;
 }
 
 function formatProductLine(product: ShopifyProduct): string {
@@ -55,7 +55,7 @@ Rules:
   }
   if (opts.resultMode === "clarification") {
     rules +=
-      "\n- Execution needs clarification. Ask one short question and provide suggestions in plain language.";
+      "\n- Execution needs clarification. Ask one short question using ONLY the server-provided suggestions below. Do NOT invent product names or categories.";
   }
   if (opts.resultMode === "multi_results") {
     rules +=
@@ -83,7 +83,9 @@ Rules:
       rules += `\n- The shopper searched for: "${searched}". Reference this naturally in your reply.`;
     }
     rules +=
-      "\n- Offer to help find something similar, but keep the reply short and realistic.";
+      "\n- Do NOT invent product types or subcategories (e.g. do not mention beeswax, candle wax, etc. unless they appear in Product context).";
+    rules +=
+      '\n- End by asking if they would like to see popular items from the store (they can reply "yes" or "show me what you have").';
   }
   if (opts.clarificationQuestion) {
     rules += `\n- Clarification question to ask: ${opts.clarificationQuestion}`;

@@ -23,6 +23,7 @@ export function parseSessionContext(raw: string | null | undefined): ChatSession
     const stage = value.stage;
     const validStage =
       stage === "greeting" ||
+      stage === "no_results" ||
       stage === "presenting_options" ||
       stage === "awaiting_confirm" ||
       stage === "completed"

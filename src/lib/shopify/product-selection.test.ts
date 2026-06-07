@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildProductSuggestionLabel,
+  isBrowseAlternativesRequest,
   isConfirmYes,
-  isVagueGreeting,
   resolveProductSelection,
 } from "@/lib/shopify/product-selection";
 import type { ShopifyProduct } from "@/lib/shopify/types";
@@ -81,8 +81,8 @@ test("isConfirmYes detects affirmative replies", () => {
   assert.equal(isConfirmYes("no thanks"), false);
 });
 
-test("isVagueGreeting detects greetings", () => {
-  assert.equal(isVagueGreeting("Hi"), true);
-  assert.equal(isVagueGreeting("hello!"), true);
-  assert.equal(isVagueGreeting("wax"), false);
+test("isBrowseAlternativesRequest detects agreement to see other products", () => {
+  assert.equal(isBrowseAlternativesRequest("sure"), true);
+  assert.equal(isBrowseAlternativesRequest("show me what else you have"), true);
+  assert.equal(isBrowseAlternativesRequest("candle wax"), false);
 });
