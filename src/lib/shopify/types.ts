@@ -27,14 +27,41 @@ export type ConversationStage =
   | "no_results"
   | "presenting_options"
   | "awaiting_confirm"
+  | "collecting_checkout"
+  | "checkout_ready"
   | "completed";
+
+export type CheckoutDraft = {
+  fullName?: string;
+  email?: string;
+  phone?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  province?: string;
+  zip?: string;
+  countryCode?: string;
+};
+
+export type CheckoutField =
+  | "fullName"
+  | "email"
+  | "phone"
+  | "address1"
+  | "address2"
+  | "city"
+  | "province"
+  | "zip";
 
 export type ChatSessionContext = {
   stage: ConversationStage;
   lastProducts?: ShopifyProduct[];
   selectedProduct?: ShopifyProduct;
   selectedVariantId?: string;
+  selectedQuantity?: number;
   lastSearchQuery?: string;
+  checkoutDraft?: CheckoutDraft;
+  checkoutField?: CheckoutField;
 };
 
 export type AgentIntent =

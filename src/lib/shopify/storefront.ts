@@ -5,7 +5,7 @@ import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
 import type { SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
 
 /** Storefront API version (tokenless requires 2024-04+). */
-const STOREFRONT_API_VERSION = "2024-10";
+const STOREFRONT_API_VERSION = "2025-01";
 
 export type ParsedFilters = {
   query: string;
@@ -102,6 +102,41 @@ mutation AddCartLines($cartId: ID!, $lines: [CartLineInput!]!) {
       cost { totalAmount { amount currencyCode } }
     }
     userErrors { field message }
+  }
+}
+`;
+
+const CART_BUYER_IDENTITY_UPDATE_MUTATION = `
+mutation CartBuyerIdentityUpdate($cartId: ID!, $buyerIdentity: CartBuyerIdentityInput!) {
+  cartBuyerIdentityUpdate(cartId: $cartId, buyerIdentity: $buyerIdentity) {
+    cart {
+      id
+      checkoutUrl
+    }
+    userErrors { field message }
+  }
+}
+`;
+
+const CART_DELIVERY_ADDRESSES_REPLACE_MUTATION = `
+mutation CartDeliveryAddressesReplace($cartId: ID!, $addresses: [CartSelectableAddressInput!]!) {
+  cartDeliveryAddressesReplace(cartId: $cartId, addresses: $addresses) {
+    cart {
+      id
+      checkoutUrl
+    }
+    userErrors { field message }
+  }
+}
+`;
+
+const CART_CHECKOUT_URL_QUERY = `
+query CartCheckoutUrl($id: ID!) {
+  cart(id: $id) {
+    checkoutUrl
+    cost {
+      totalAmount { amount currencyCode }
+    }
   }
 }
 `;
@@ -411,5 +446,111 @@ export async function addToCart(params: {
     cartId: data.cartCreate.cart.id,
     checkoutUrl: data.cartCreate.cart.checkoutUrl,
     totalPrice: formatTotal(data.cartCreate.cart.cost),
+  };
+}
+
+export type CartCheckoutDetails = {
+  email: string;
+  phone: string;
+  countryCode: string;
+  firstName: string;
+  lastName: string;
+  address1: string;
+  address2?: string;
+  city: string;
+  provinceCode: string;
+  zip: string;
+};
+
+export async function applyCheckoutDetailsToCart(params: {
+  store: StorefrontStore;
+  cartId: string;
+  details: CartCheckoutDetails;
+}): Promise<{ checkoutUrl: string }> {
+  const deliveryAddressInput = {
+    selected: true,
+    oneTimeUse: true,
+    address: {
+      deliveryAddress: {
+        firstName: params.details.firstName,
+        lastName: params.details.lastName,
+        address1: params.details.address1,
+        address2: params.details.address2 || undefined,
+        city: params.details.city,
+        provinceCode: params.details.provinceCode,
+        zip: params.details.zip,
+        countryCode: params.details.countryCode,
+        phone: params.details.phone,
+      },
+    },
+  };
+
+  const identityData = await storefrontFetch<{
+    cartBuyerIdentityUpdate: {
+      cart: { id: string; checkoutUrl: string } | null;
+      userErrors: Array<{ field?: string[]; message: string }>;
+    };
+  }>(params.store, CART_BUYER_IDENTITY_UPDATE_MUTATION, {
+    cartId: params.cartId,
+    buyerIdentity: {
+      email: params.details.email,
+      phone: params.details.phone,
+      countryCode: params.details.countryCode,
+    },
+  });
+
+  const identityErrors = identityData.cartBuyerIdentityUpdate.userErrors;
+  if (identityErrors.length) {
+    throw new Error(
+      `Buyer identity: ${identityErrors.map((e) => e.message).join("; ")}`
+    );
+  }
+
+  const addressData = await storefrontFetch<{
+    cartDeliveryAddressesReplace: {
+      cart: { id: string; checkoutUrl: string } | null;
+      userErrors: Array<{ field?: string[]; message: string }>;
+    };
+  }>(params.store, CART_DELIVERY_ADDRESSES_REPLACE_MUTATION, {
+    cartId: params.cartId,
+    addresses: [deliveryAddressInput],
+  });
+
+  const addressErrors = addressData.cartDeliveryAddressesReplace.userErrors;
+  if (addressErrors.length) {
+    throw new Error(
+      `Delivery address: ${addressErrors.map((e) => e.message).join("; ")}`
+    );
+  }
+
+  const cart =
+    addressData.cartDeliveryAddressesReplace.cart ??
+    identityData.cartBuyerIdentityUpdate.cart;
+  if (!cart?.checkoutUrl) throw new Error("Checkout URL unavailable");
+  return { checkoutUrl: cart.checkoutUrl };
+}
+
+export async function getCartCheckoutUrl(params: {
+  store: StorefrontStore;
+  cartId: string;
+}): Promise<string | null> {
+  const summary = await getCartSummary(params);
+  return summary?.checkoutUrl ?? null;
+}
+
+export async function getCartSummary(params: {
+  store: StorefrontStore;
+  cartId: string;
+}): Promise<{ checkoutUrl: string; totalPrice: string | null } | null> {
+  const data = await storefrontFetch<{
+    cart: {
+      checkoutUrl: string;
+      cost: { totalAmount: { amount: string; currencyCode: string } };
+    } | null;
+  }>(params.store, CART_CHECKOUT_URL_QUERY, { id: params.cartId });
+  if (!data.cart?.checkoutUrl) return null;
+  return {
+    checkoutUrl: data.cart.checkoutUrl,
+    totalPrice: formatTotal(data.cart.cost),
   };
 }

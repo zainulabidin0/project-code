@@ -57,6 +57,15 @@
     var style = document.createElement("style");
     style.id = "af-responsive-css";
     style.textContent =
+      "#af-panel .af-list{overflow-x:hidden}" +
+      "#af-panel .af-products{width:100%;max-width:100%;box-sizing:border-box}" +
+      "#af-panel .af-prod{display:flex;flex-direction:column;width:100%;max-width:100%;box-sizing:border-box;overflow:hidden}" +
+      "#af-panel .af-prod-img-wrap{width:100%;height:112px;overflow:hidden;border-radius:8px;background:#f4f4f4;flex-shrink:0}" +
+      "#af-panel .af-prod-img-wrap img{width:100%!important;height:100%!important;max-width:100%!important;max-height:112px!important;object-fit:cover!important;display:block!important}" +
+      "#af-panel .af-prod-info{width:100%;box-sizing:border-box;margin-top:8px}" +
+      "#af-panel .af-product-title{line-height:1.35;word-break:break-word;white-space:normal}" +
+      "#af-panel .af-product-price{margin-top:4px}" +
+      "#af-panel .af-add-cart{width:100%;box-sizing:border-box;white-space:nowrap}" +
       "@media (max-width:480px){#af-panel{width:100vw!important;height:100vh!important;bottom:0!important;right:0!important;left:0!important;border-radius:0!important;position:fixed!important}#af-btn{bottom:16px!important;right:16px!important}}" +
       "@media (min-width:481px) and (max-width:768px){#af-panel{width:calc(100vw - 32px)!important}}";
     document.head.appendChild(style);
@@ -155,17 +164,20 @@
         return r.json();
       })
       .then(function (j) {
-        if (j.success && j.data && j.data.checkoutUrl) {
-          appendMsg(list, "assistant", "Added to cart.");
-          var a = document.createElement("a");
-          a.href = j.data.checkoutUrl;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
-          a.textContent = "Checkout →";
-          a.style.display = "inline-block";
-          a.style.marginTop = "6px";
-          a.style.color = accent;
-          list.appendChild(a);
+        if (j.success && j.data) {
+          var msg = j.data.message || "Added to cart.";
+          appendMsg(list, "assistant", msg);
+          if (j.data.checkoutReady && j.data.checkoutUrl) {
+            var checkoutLink = document.createElement("a");
+            checkoutLink.href = j.data.checkoutUrl;
+            checkoutLink.target = "_blank";
+            checkoutLink.rel = "noopener noreferrer";
+            checkoutLink.textContent = "Complete order →";
+            checkoutLink.style.display = "inline-block";
+            checkoutLink.style.marginTop = "6px";
+            checkoutLink.style.color = accent;
+            list.appendChild(checkoutLink);
+          }
           list.scrollTop = list.scrollHeight;
           return true;
         }
@@ -203,42 +215,56 @@
     renderSuggestionChips(container, suggestions, accent, sendHandler, "af-suggestions");
   }
 
-  function renderProducts(container, products, accent, selectedProductId) {
+  function renderProducts(container, products, accent, selectedProductId, conversationStage) {
     if (!products || !products.length) return;
+    var hideAddToCart =
+      conversationStage === "collecting_checkout" ||
+      conversationStage === "checkout_ready" ||
+      conversationStage === "completed";
     var wrap = el("div", "af-products");
     wrap.style.display = "flex";
     wrap.style.flexDirection = "column";
-    wrap.style.gap = "8px";
+    wrap.style.gap = "10px";
     wrap.style.marginTop = "6px";
+    wrap.style.width = "100%";
+    wrap.style.maxWidth = "100%";
+    wrap.style.boxSizing = "border-box";
     products.forEach(function (p) {
       var card = el("div", "af-prod");
       card.style.display = "flex";
-      card.style.gap = "8px";
-      card.style.alignItems = "flex-start";
+      card.style.flexDirection = "column";
+      card.style.width = "100%";
+      card.style.maxWidth = "100%";
+      card.style.boxSizing = "border-box";
       card.style.border = "1px solid #eee";
       card.style.borderRadius = "10px";
       card.style.padding = "8px";
+      card.style.overflow = "hidden";
       if (selectedProductId && p.id === selectedProductId) {
         card.style.border = "2px solid " + accent;
         card.style.background = "#fafafa";
       }
+
       if (p.image) {
+        var imgWrap = el("div", "af-prod-img-wrap");
         var img = document.createElement("img");
+        img.className = "af-prod-img";
         img.src = p.image;
         img.alt = p.title || "";
-        img.width = 48;
-        img.height = 48;
-        img.style.borderRadius = "8px";
+        img.loading = "lazy";
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.maxWidth = "100%";
         img.style.objectFit = "cover";
-        img.style.flexShrink = "0";
+        img.style.display = "block";
         img.onerror = function () {
-          img.style.display = "none";
+          imgWrap.style.display = "none";
         };
-        card.appendChild(img);
+        imgWrap.appendChild(img);
+        card.appendChild(imgWrap);
       }
+
       var info = el("div", "af-prod-info");
-      info.style.flex = "1";
-      info.style.minWidth = "0";
       var title = el("div", "af-product-title", p.title || "");
       title.style.fontWeight = "600";
       title.style.fontSize = "13px";
@@ -251,17 +277,19 @@
       var hasVariants = p.variants && p.variants.length > 1;
       if (hasVariants) info.appendChild(renderVariantPicker(p));
 
-      if (p.variants && p.variants.length) {
+      if (p.variants && p.variants.length && !hideAddToCart) {
         var btn = el("button", "af-add-cart", "Add to cart");
         btn.type = "button";
-        btn.style.marginTop = "6px";
+        btn.style.marginTop = "8px";
         btn.style.fontSize = "12px";
-        btn.style.padding = "4px 10px";
+        btn.style.padding = "8px 10px";
         btn.style.borderRadius = "8px";
         btn.style.border = "none";
         btn.style.background = accent;
         btn.style.color = "#fff";
         btn.style.cursor = "pointer";
+        btn.style.width = "100%";
+        btn.style.boxSizing = "border-box";
         btn.onclick = function () {
           var variant = hasVariants ? getSelectedVariant(p, card) : p.variants[0];
           if (!variant || !variant.id) {
@@ -358,6 +386,7 @@
     var list = el("div", "af-list");
     list.style.padding = "10px";
     list.style.overflow = "auto";
+    list.style.overflowX = "hidden";
     list.style.flex = "1";
     appendMsg(list, "assistant", config.greeting);
 
@@ -436,7 +465,7 @@
             json.data.selectedProduct && json.data.selectedProduct.id
               ? json.data.selectedProduct.id
               : null;
-          renderProducts(list, json.data.products, config.color, selectedId);
+          renderProducts(list, json.data.products, config.color, selectedId, json.data.conversationStage);
         }
         if (json.data && json.data.productSuggestions && json.data.productSuggestions.length) {
           renderSuggestionChips(list, json.data.productSuggestions, config.color, onSend, "af-product-suggestions");
@@ -444,12 +473,12 @@
         if (json.data && json.data.needsClarification && json.data.suggestions) {
           renderClarificationSuggestions(list, json.data.suggestions, config.color, onSend);
         }
-        if (json.data && json.data.cartAction && json.data.cartAction.checkoutUrl) {
+        if (json.data && json.data.checkoutReady && json.data.cartAction && json.data.cartAction.checkoutUrl) {
           var a = document.createElement("a");
           a.href = json.data.cartAction.checkoutUrl;
           a.target = "_blank";
           a.rel = "noopener noreferrer";
-          a.textContent = "Proceed to checkout →";
+          a.textContent = "Complete order →";
           a.style.display = "inline-block";
           a.style.marginTop = "8px";
           a.style.color = config.color;

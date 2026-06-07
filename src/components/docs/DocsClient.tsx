@@ -332,9 +332,9 @@ export function DocsChrome({
           className="inline-flex items-center gap-2 text-xl font-semibold tracking-tight text-white"
         >
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-sm font-bold text-emerald-400">
-            A
+            Q
           </span>
-          AddressFix
+          Quick POS
         </Link>
 
         <nav className="flex flex-wrap items-center justify-center gap-1 sm:absolute sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2">

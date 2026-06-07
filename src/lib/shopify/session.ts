@@ -26,6 +26,8 @@ export function parseSessionContext(raw: string | null | undefined): ChatSession
       stage === "no_results" ||
       stage === "presenting_options" ||
       stage === "awaiting_confirm" ||
+      stage === "collecting_checkout" ||
+      stage === "checkout_ready" ||
       stage === "completed"
         ? stage
         : "greeting";
@@ -35,8 +37,20 @@ export function parseSessionContext(raw: string | null | undefined): ChatSession
       selectedProduct: value.selectedProduct,
       selectedVariantId:
         typeof value.selectedVariantId === "string" ? value.selectedVariantId : undefined,
+      selectedQuantity:
+        typeof value.selectedQuantity === "number" &&
+        Number.isFinite(value.selectedQuantity) &&
+        value.selectedQuantity >= 1
+          ? Math.min(10, Math.round(value.selectedQuantity))
+          : undefined,
       lastSearchQuery:
         typeof value.lastSearchQuery === "string" ? value.lastSearchQuery : undefined,
+      checkoutDraft:
+        value.checkoutDraft && typeof value.checkoutDraft === "object"
+          ? (value.checkoutDraft as ChatSessionContext["checkoutDraft"])
+          : undefined,
+      checkoutField:
+        typeof value.checkoutField === "string" ? (value.checkoutField as ChatSessionContext["checkoutField"]) : undefined,
     };
   } catch {
     return { ...DEFAULT_SESSION_CONTEXT };

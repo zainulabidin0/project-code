@@ -23,9 +23,9 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "AddressFix — Global address correction API",
+  title: "Quick POS — AI shopping assistant for your store",
   description:
-    "Correct and standardize addresses with regex + AI. API keys, usage analytics, and an npm SDK.",
+    "Quick POS powers conversational sales on Shopify with ShopAssist, plus address correction and review APIs.",
 };
 
 export default function RootLayout({

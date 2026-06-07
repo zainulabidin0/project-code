@@ -6,7 +6,7 @@ export default function HomePage() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-900/40 via-zinc-950 to-zinc-950" />
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <span className="font-display text-xl font-semibold tracking-tight text-white">
-          AddressFix
+          Quick POS
         </span>
         <nav className="flex gap-4 text-sm text-zinc-400">
           <Link href="/login" className="hover:text-white">
@@ -23,15 +23,15 @@ export default function HomePage() {
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24 pt-16">
         <p className="mb-4 text-sm font-medium uppercase tracking-widest text-emerald-400/90">
-          MicroSaaS for developers
+          AI-powered storefront sales
         </p>
         <h1 className="font-display max-w-3xl text-4xl font-semibold leading-tight text-white sm:text-5xl md:text-6xl">
-          &amp; standardize addresses globally
+          Sell faster with a smart chat assistant on your store
         </h1>
         <p className="mt-6 max-w-2xl text-lg text-zinc-400">
-          Two-layer pipeline: fast regex normalization plus optional Groq AI
-          for spelling, casing, and formatting. REST API, dashboard, and npm
-          SDK.
+          Quick POS helps shoppers find products, add to cart, and checkout through
+          natural conversation — plus address correction, reviews, and APIs for
+          your stack.
         </p>
         <div className="mt-10 flex flex-wrap gap-4">
           <Link
@@ -51,16 +51,16 @@ export default function HomePage() {
         <section className="mt-24 grid gap-8 md:grid-cols-3">
           {[
             {
+              title: "ShopAssist widget",
+              body: "Embed AI chat on Shopify — search, recommend, add to cart, and collect checkout details.",
+            },
+            {
               title: "API keys & projects",
-              body: "Per-project keys, SHA-256 at rest, plan-based quotas and rate limits.",
+              body: "Per-project keys, usage analytics, and plan-based quotas for every integration.",
             },
             {
-              title: "Regex + AI",
-              body: "Deterministic rules first; Groq (Llama 3.3) when structure still needs help.",
-            },
-            {
-              title: "npm SDK",
-              body: "`addressfix` client with retries, timeouts, and typed errors.",
+              title: "Address & reviews APIs",
+              body: "Correct addresses and analyze sentiment with REST endpoints and developer docs.",
             },
           ].map((c) => (
             <div

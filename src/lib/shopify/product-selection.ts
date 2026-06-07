@@ -34,6 +34,11 @@ export function buildProductSuggestions(products: ShopifyProduct[]): string[] {
   return products.map(buildProductSuggestionLabel);
 }
 
+export function pickDefaultVariant(product: ShopifyProduct): string | undefined {
+  const available = product.variants.filter((v) => v.available);
+  return available.length === 1 ? available[0].id : undefined;
+}
+
 function parseOrdinalIndex(message: string, max: number): number | null {
   const text = message.toLowerCase().trim();
 
@@ -189,6 +194,67 @@ export function resolveVariantFromMessage(
       v.options.some((o) => o.value.toLowerCase() === text || text.includes(o.value.toLowerCase()))
   );
   return partial?.id;
+}
+
+export function parseRequestedQuantity(message: string): number | undefined {
+  const text = message.toLowerCase();
+  const patterns = [
+    /\b(\d+)\s*(?:piece|pieces|pcs|pc|qty|quantity|items?|units?)\b/i,
+    /\b(?:piece|pieces|pcs|pc|qty)\s*(\d+)\b/i,
+    /\bx\s*(\d+)\b/i,
+    /\b(\d+)\s*x\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      const qty = parseInt(match[1], 10);
+      if (qty >= 1 && qty <= 10) return qty;
+    }
+  }
+  return undefined;
+}
+
+export function isPurchaseIntent(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  return /\b(buy|purchase|order|add|cart|krne|krna|kharid|lena|chahiye|chahye|dedo|add to cart|checkout)\b/i.test(
+    text
+  );
+}
+
+export function productsForDisplay(
+  sessionContext: {
+    stage: string;
+    selectedProduct?: ShopifyProduct;
+    lastProducts?: ShopifyProduct[];
+  },
+  products: ShopifyProduct[]
+): ShopifyProduct[] {
+  if (
+    sessionContext.selectedProduct &&
+    (sessionContext.stage === "awaiting_confirm" ||
+      sessionContext.stage === "collecting_checkout" ||
+      sessionContext.stage === "checkout_ready" ||
+      sessionContext.stage === "completed")
+  ) {
+    return [sessionContext.selectedProduct];
+  }
+  if (sessionContext.stage === "presenting_options" && sessionContext.lastProducts?.length) {
+    return sessionContext.lastProducts;
+  }
+  return products;
+}
+
+export function isDirectCartAddRequest(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  if (isConfirmYes(text)) return true;
+  if (/^add\b/.test(text)) return true;
+  if (/\badd to cart\b/.test(text)) return true;
+  if (/\badd (?:it|them|this|those)\b/.test(text)) return true;
+  if (/\bplease add\b/.test(text)) return true;
+  if (/\b(?:buy|purchase|order|krne|krna|kharid|lena)\b/.test(text) && parseRequestedQuantity(text)) {
+    return true;
+  }
+  return false;
 }
 
 export function isConfirmYes(message: string): boolean {

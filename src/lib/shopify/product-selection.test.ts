@@ -4,6 +4,9 @@ import {
   buildProductSuggestionLabel,
   isBrowseAlternativesRequest,
   isConfirmYes,
+  isDirectCartAddRequest,
+  parseRequestedQuantity,
+  productsForDisplay,
   resolveProductSelection,
 } from "@/lib/shopify/product-selection";
 import type { ShopifyProduct } from "@/lib/shopify/types";
@@ -81,6 +84,30 @@ test("isConfirmYes detects affirmative replies", () => {
   assert.equal(isConfirmYes("no thanks"), false);
 });
 
+test("parseRequestedQuantity extracts piece counts", () => {
+  assert.equal(parseRequestedQuantity("mujhe iss k 2 piece buy krne hn"), 2);
+  assert.equal(parseRequestedQuantity("3 pcs please"), 3);
+  assert.equal(parseRequestedQuantity("just one"), undefined);
+});
+
+test("productsForDisplay returns only selected product when awaiting confirm", () => {
+  const mesh = sampleProducts[0];
+  const lighter = sampleProducts[1];
+  const displayed = productsForDisplay(
+    { stage: "awaiting_confirm", selectedProduct: mesh, lastProducts: [lighter, mesh] },
+    [lighter, mesh]
+  );
+  assert.equal(displayed.length, 1);
+  assert.equal(displayed[0].title, "Lemon Body Wax");
+});
+
+test("isDirectCartAddRequest detects explicit add commands", () => {
+  assert.equal(isDirectCartAddRequest("Add 2 pieces please"), true);
+  assert.equal(isDirectCartAddRequest("add to cart"), true);
+  assert.equal(isDirectCartAddRequest("yes"), true);
+  assert.equal(isDirectCartAddRequest("mujhe 2 piece buy krne hn"), true);
+  assert.equal(isDirectCartAddRequest("I want to browse"), false);
+});
 test("isBrowseAlternativesRequest detects agreement to see other products", () => {
   assert.equal(isBrowseAlternativesRequest("sure"), true);
   assert.equal(isBrowseAlternativesRequest("show me what else you have"), true);

@@ -106,6 +106,21 @@ test("parseIntent rule-based browse_alternatives after no_results", async () => 
   assert.equal(intent.intent, "browse_alternatives");
   assert.equal(intent.needsClarification, false);
 });
+test("parseIntent routes add 2 pieces to confirm_add_to_cart", async () => {
+  const intent = await parseIntent("Add 2 pieces please", {
+    history: [],
+    context: {
+      stage: "awaiting_confirm",
+      selectedProduct: waxProducts[0],
+      selectedVariantId: "gid://shopify/ProductVariant/101",
+      selectedQuantity: 2,
+    },
+  });
+  assert.equal(intent.intent, "confirm_add_to_cart");
+  assert.equal(intent.quantity, 2);
+  assert.equal(intent.variantId, "gid://shopify/ProductVariant/101");
+});
+
 test("isConfirmYes and resolveProductSelection integrate for salesman flow", () => {
   assert.equal(isConfirmYes("yeah add it"), true);
   const pick = resolveProductSelection("the honey one", waxProducts);

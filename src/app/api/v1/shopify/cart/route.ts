@@ -5,8 +5,10 @@ import { jsonError } from "@/lib/errors";
 import { db } from "@/lib/db";
 import { shopChatSessions } from "@/lib/db/schema";
 import { getActiveStoreByDomain } from "@/lib/shopify/store";
-import { getOrCreateSession } from "@/lib/shopify/session";
+import { getOrCreateSession, parseSessionContext, saveSessionContext } from "@/lib/shopify/session";
 import { addToCart, type StorefrontStore } from "@/lib/shopify/storefront";
+import { buildSessionAfterCartAdd } from "@/lib/shopify/checkout-collector";
+
 export const runtime = "nodejs";
 
 const bodySchema = z.object({
@@ -44,6 +46,7 @@ export async function POST(req: NextRequest) {
   };
 
   const session = await getOrCreateSession(store.id, parsed.data.sessionToken, req.ip);
+  const sessionContext = parseSessionContext(session.sessionContext);
   const cart = await addToCart({
     store: storefrontStore,
     variantId: parsed.data.variantId,
@@ -51,15 +54,31 @@ export async function POST(req: NextRequest) {
     cartId: session.cartToken,
   });
 
-  await db.update(shopChatSessions).set({ cartToken: cart.cartId }).where(eq(shopChatSessions.id, session.id));
+  const afterAdd = buildSessionAfterCartAdd({
+    sessionContext: {
+      ...sessionContext,
+      selectedVariantId: parsed.data.variantId,
+      selectedQuantity: parsed.data.quantity,
+    },
+    cart: { cartId: cart.cartId, totalPrice: cart.totalPrice },
+    variantId: parsed.data.variantId,
+    quantity: parsed.data.quantity,
+  });
+
+  await db
+    .update(shopChatSessions)
+    .set({ cartToken: cart.cartId })
+    .where(eq(shopChatSessions.id, session.id));
+  await saveSessionContext(session.id, afterAdd.sessionContext);
 
   return NextResponse.json({
     success: true,
     data: {
       cartId: cart.cartId,
-      checkoutUrl: cart.checkoutUrl,
-      lineItems: [],
       totalPrice: cart.totalPrice,
+      message: afterAdd.introMessage,
+      conversationStage: afterAdd.sessionContext.stage,
+      checkoutReady: false,
     },
   });
 }

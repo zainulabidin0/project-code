@@ -11,11 +11,15 @@ import type { ParsedFilters } from "@/lib/shopify/storefront";
 import { getGroqKey, groqChatCompletion, GROQ_INTENT_MODEL } from "@/lib/groq/client";
 import {
   isBrowseAlternativesRequest,
-  isConfirmYes,
+  isDirectCartAddRequest,
+  isPurchaseIntent,
   isVagueGreeting,
+  parseRequestedQuantity,
+  pickDefaultVariant,
   resolveProductSelection,
   resolveVariantFromMessage,
 } from "@/lib/shopify/product-selection";
+import { isCheckoutIntent } from "@/lib/shopify/checkout-collector";
 
 const fallback: AgentResponse = {
   intent: "chitchat",
@@ -172,13 +176,44 @@ function ruleBasedIntent(message: string, opts?: ParseIntentOptions): ParsedInte
     return { intent: "chitchat", confidence: "high", needsClarification: false };
   }
 
-  if (context?.stage === "awaiting_confirm" && isConfirmYes(trimmed)) {
+  if (
+    context?.stage !== "collecting_checkout" &&
+    isCheckoutIntent(trimmed)
+  ) {
     return {
-      intent: "confirm_add_to_cart",
-      variantId: context.selectedVariantId,
+      intent: "start_checkout",
       confidence: "high",
       needsClarification: false,
     };
+  }
+
+  if (context?.selectedProduct && isDirectCartAddRequest(trimmed)) {
+    const qty = parseRequestedQuantity(trimmed);
+    const variantId =
+      context.selectedVariantId ?? pickDefaultVariant(context.selectedProduct);
+    if (variantId) {
+      return {
+        intent: "confirm_add_to_cart",
+        variantId,
+        quantity: qty ?? context.selectedQuantity ?? 1,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
+  if (context?.stage === "awaiting_confirm" && context.selectedProduct) {
+    const qty = parseRequestedQuantity(trimmed);
+    if (qty || (isPurchaseIntent(trimmed) && !isDirectCartAddRequest(trimmed))) {
+      return {
+        intent: "select_product",
+        productTitle: context.selectedProduct.title,
+        variantId: context.selectedVariantId,
+        quantity: qty ?? context.selectedQuantity,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
   }
 
   if (context?.stage === "no_results" && isBrowseAlternativesRequest(trimmed)) {
