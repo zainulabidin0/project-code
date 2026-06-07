@@ -239,7 +239,7 @@ export const shopifyStores = pgTable(
       .notNull(),
     widgetColor: varchar("widget_color", { length: 7 }).default("#000000").notNull(),
     widgetGreeting: text("widget_greeting")
-      .default("Hi! How can I help you today?")
+      .default("What would you like to buy today?")
       .notNull(),
     isActive: boolean("is_active").default(true).notNull(),
     authStatus: varchar("auth_status", { length: 30 }).default("ACTIVE").notNull(),
@@ -270,6 +270,7 @@ export const shopChatSessions = pgTable(
     sessionToken: varchar("session_token", { length: 128 }).notNull().unique(),
     cartToken: varchar("cart_token", { length: 255 }),
     messages: text("messages").notNull().default("[]"),
+    sessionContext: text("session_context").notNull().default("{}"),
     ip: varchar("ip", { length: 45 }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")

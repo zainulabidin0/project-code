@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildFallbackPlan, inferSortHints, normalizeShopifyQuery } from "@/lib/shopify/intent-parser";
+import { buildFallbackPlan, inferSortHints, normalizeShopifyQuery, parseIntent } from "@/lib/shopify/intent-parser";
 import { recoverSearchPlan } from "@/lib/shopify/query-recovery";
+import { isConfirmYes, resolveProductSelection } from "@/lib/shopify/product-selection";
+import type { ShopifyProduct } from "@/lib/shopify/types";
 
 test("normalizeShopifyQuery removes filler words and punctuation", () => {
   const normalized = normalizeShopifyQuery("Show me some NEW products, please?");
@@ -39,4 +41,60 @@ test("recoverSearchPlan falls back to rule-based clarification or rewrite when l
   } finally {
     if (originalKey) process.env.GROQ_API_KEY = originalKey;
   }
+});
+
+const waxProducts: ShopifyProduct[] = [
+  {
+    id: "gid://shopify/Product/1",
+    title: "Lemon Body Wax",
+    price: "12.00",
+    currency: "USD",
+    image: null,
+    url: "/products/lemon-wax",
+    variants: [{ id: "gid://shopify/ProductVariant/101", title: "Default", available: true, options: [] }],
+  },
+  {
+    id: "gid://shopify/Product/2",
+    title: "Honey Wax",
+    price: "15.00",
+    currency: "USD",
+    image: null,
+    url: "/products/honey-wax",
+    variants: [{ id: "gid://shopify/ProductVariant/102", title: "Default", available: true, options: [] }],
+  },
+];
+
+test("parseIntent rule-based confirm_add_to_cart when awaiting confirm", async () => {
+  const intent = await parseIntent("yes please", {
+    history: [
+      { role: "user", content: "wax" },
+      { role: "assistant", content: "Which one?" },
+    ],
+    context: {
+      stage: "awaiting_confirm",
+      selectedProduct: waxProducts[0],
+      selectedVariantId: "gid://shopify/ProductVariant/101",
+    },
+  });
+  assert.equal(intent.intent, "confirm_add_to_cart");
+  assert.equal(intent.variantId, "gid://shopify/ProductVariant/101");
+});
+
+test("parseIntent rule-based select_product from presenting options", async () => {
+  const intent = await parseIntent("lemon wax", {
+    history: [{ role: "user", content: "wax" }],
+    context: {
+      stage: "presenting_options",
+      lastProducts: waxProducts,
+    },
+  });
+  assert.equal(intent.intent, "select_product");
+  assert.equal(intent.variantId, "gid://shopify/ProductVariant/101");
+});
+
+test("isConfirmYes and resolveProductSelection integrate for salesman flow", () => {
+  assert.equal(isConfirmYes("yeah add it"), true);
+  const pick = resolveProductSelection("the honey one", waxProducts);
+  assert.ok(pick);
+  assert.equal(pick.product.title, "Honey Wax");
 });

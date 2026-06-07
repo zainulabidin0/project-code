@@ -22,8 +22,24 @@ export type ShopifyProduct = {
   }>;
 };
 
+export type ConversationStage =
+  | "greeting"
+  | "presenting_options"
+  | "awaiting_confirm"
+  | "completed";
+
+export type ChatSessionContext = {
+  stage: ConversationStage;
+  lastProducts?: ShopifyProduct[];
+  selectedProduct?: ShopifyProduct;
+  selectedVariantId?: string;
+  lastSearchQuery?: string;
+};
+
 export type AgentIntent =
   | "product_search"
+  | "select_product"
+  | "confirm_add_to_cart"
   | "add_to_cart"
   | "show_cart"
   | "start_checkout"
@@ -48,6 +64,8 @@ export type ShopAssistActionPlan = {
   sortKey?: SearchSortKey;
   reverse?: boolean;
   variantId?: string;
+  productIndex?: number;
+  productTitle?: string;
   quantity?: number;
   confidence: IntentConfidence;
   needsClarification: boolean;

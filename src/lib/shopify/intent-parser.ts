@@ -1,12 +1,20 @@
 import type {
   AgentResponse,
+  ChatSessionContext,
   ClarificationPayload,
   IntentConfidence,
   SearchSortKey,
+  SessionMessage,
   ShopAssistActionPlan,
 } from "@/lib/shopify/types";
 import type { ParsedFilters } from "@/lib/shopify/storefront";
 import { getGroqKey, groqChatCompletion, GROQ_INTENT_MODEL } from "@/lib/groq/client";
+import {
+  isConfirmYes,
+  isVagueGreeting,
+  resolveProductSelection,
+  resolveVariantFromMessage,
+} from "@/lib/shopify/product-selection";
 
 const fallback: AgentResponse = {
   intent: "chitchat",
@@ -15,6 +23,11 @@ const fallback: AgentResponse = {
 
 export type ParsedIntent = ShopAssistActionPlan & {
   filters?: ParsedFilters;
+};
+
+export type ParseIntentOptions = {
+  history?: SessionMessage[];
+  context?: ChatSessionContext;
 };
 
 export function parseAgentResponse(raw: string | null | undefined): AgentResponse {
@@ -37,6 +50,8 @@ function coerceIntent(value: unknown): ParsedIntent["intent"] {
   const v = typeof value === "string" ? value : "";
   if (
     v === "product_search" ||
+    v === "select_product" ||
+    v === "confirm_add_to_cart" ||
     v === "add_to_cart" ||
     v === "show_cart" ||
     v === "start_checkout" ||
@@ -96,7 +111,7 @@ function defaultClarification(message: string): ClarificationPayload {
     };
   }
   return {
-    question: "I can help search products. What would you like to see?",
+    question: "What would you like to buy today?",
     suggestions: ["Show latest products", "Show best selling products", "Show products under $50"],
   };
 }
@@ -130,36 +145,102 @@ export function buildFallbackPlan(message: string): ParsedIntent {
   };
 }
 
-/**
- * Lightweight intent + slot extraction for the ShopAssist pipeline.
- * Uses Groq when GROQ_API_KEY is set; otherwise treats the message as a product search query.
- */
-export async function parseIntent(message: string): Promise<ParsedIntent> {
+function buildContextSummary(context?: ChatSessionContext): string {
+  if (!context) return "";
+  const lines: string[] = [`Conversation stage: ${context.stage}`];
+  if (context.lastSearchQuery) lines.push(`Last search: ${context.lastSearchQuery}`);
+  if (context.lastProducts?.length) {
+    lines.push(
+      "Products shown:",
+      ...context.lastProducts.map((p, i) => `${i + 1}. ${p.title} (${p.price} ${p.currency})`)
+    );
+  }
+  if (context.selectedProduct) {
+    lines.push(`Selected product: ${context.selectedProduct.title}`);
+  }
+  return lines.join("\n");
+}
+
+function ruleBasedIntent(message: string, opts?: ParseIntentOptions): ParsedIntent | null {
   const trimmed = message.trim();
+  const context = opts?.context;
+  const history = opts?.history ?? [];
+
   if (!trimmed) {
+    return { intent: "chitchat", confidence: "high", needsClarification: false };
+  }
+
+  if (context?.stage === "awaiting_confirm" && isConfirmYes(trimmed)) {
     return {
-      intent: "chitchat",
+      intent: "confirm_add_to_cart",
+      variantId: context.selectedVariantId,
       confidence: "high",
       needsClarification: false,
     };
   }
 
-  if (!getGroqKey()) {
-    return buildFallbackPlan(trimmed);
+  if (context?.selectedProduct && !context.selectedVariantId) {
+    const variantId = resolveVariantFromMessage(trimmed, context.selectedProduct);
+    if (variantId) {
+      return {
+        intent: "select_product",
+        productTitle: context.selectedProduct.title,
+        variantId,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
   }
 
-  const result = await groqChatCompletion({
-    model: GROQ_INTENT_MODEL,
-    max_tokens: 220,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `You extract shopping intent and execution plan for Shopify Storefront API.
+  if (
+    context?.stage === "presenting_options" &&
+    context.lastProducts?.length
+  ) {
+    const selection = resolveProductSelection(trimmed, context.lastProducts);
+    if (selection) {
+      if (selection.needsVariantChoice) {
+        return {
+          intent: "select_product",
+          productIndex: selection.productIndex,
+          productTitle: selection.product.title,
+          confidence: "high",
+          needsClarification: true,
+          clarification: {
+            question: `Which size or option for ${selection.product.title}?`,
+            suggestions: selection.product.variants
+              .filter((v) => v.available)
+              .slice(0, 4)
+              .map((v) => v.title),
+          },
+        };
+      }
+      return {
+        intent: "select_product",
+        productIndex: selection.productIndex,
+        productTitle: selection.product.title,
+        variantId: selection.variantId,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
+  if (history.length === 0 && isVagueGreeting(trimmed)) {
+    return { intent: "chitchat", confidence: "high", needsClarification: false };
+  }
+
+  return null;
+}
+
+function buildIntentSystemPrompt(context?: ChatSessionContext): string {
+  const contextBlock = buildContextSummary(context);
+  return `You extract shopping intent and execution plan for Shopify Storefront API.
 Reply with ONLY a JSON object (no markdown).
 
 Intents:
 - product_search: browse/find products
+- select_product: shopper picks from previously shown products (include productIndex 0-based or productTitle)
+- confirm_add_to_cart: shopper confirms yes/add it when a product was already selected
 - add_to_cart: user wants to add a specific item (include variantId if they pasted a Shopify GID like gid://shopify/ProductVariant/...)
 - show_cart: view cart
 - start_checkout: pay / checkout
@@ -172,17 +253,55 @@ For product_search include:
 - reverse: boolean
 - optional filters: query, color, maxPrice, minPrice, category, size
 
+For select_product include:
+- productIndex: number (0-based index from shown products)
+- productTitle: string when obvious
+
 Rules:
+- If stage is presenting_options and user picks an item, use select_product
+- If stage is awaiting_confirm and user says yes/sure/add it, use confirm_add_to_cart
 - "new/latest/recent" => sortKey=CREATED_AT and reverse=true
 - "cheap/lowest price" => sortKey=PRICE and reverse=false
 - If unclear, set needsClarification=true with clarification.question and 2-4 suggestions.
 - If add_to_cart but no variantId, set needsClarification=true.
 - confidence: low | medium | high
 
-Example:
-{"intent":"product_search","shopifyQuery":"running shoes","sortKey":"RELEVANCE","reverse":false,"filters":{"query":"running shoes","maxPrice":120},"confidence":"high","needsClarification":false}
-`,
-      },
+${contextBlock ? `Session context:\n${contextBlock}` : ""}`;
+}
+
+/**
+ * Lightweight intent + slot extraction for the ShopAssist pipeline.
+ * Uses Groq when GROQ_API_KEY is set; otherwise treats the message as a product search query.
+ */
+export async function parseIntent(message: string, opts?: ParseIntentOptions): Promise<ParsedIntent> {
+  const trimmed = message.trim();
+  const ruleResult = ruleBasedIntent(trimmed, opts);
+  if (ruleResult) return ruleResult;
+
+  if (!trimmed) {
+    return {
+      intent: "chitchat",
+      confidence: "high",
+      needsClarification: false,
+    };
+  }
+
+  if (!getGroqKey()) {
+    return buildFallbackPlan(trimmed);
+  }
+
+  const historyMessages = (opts?.history ?? []).slice(-6).map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const result = await groqChatCompletion({
+    model: GROQ_INTENT_MODEL,
+    max_tokens: 220,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: buildIntentSystemPrompt(opts?.context) },
+      ...historyMessages,
       { role: "user", content: trimmed },
     ],
   });
@@ -203,6 +322,11 @@ Example:
     const reverse =
       typeof parsed.reverse === "boolean" ? parsed.reverse : inferSortHints(trimmed).reverse ?? false;
     const variantId = typeof parsed.variantId === "string" ? parsed.variantId : undefined;
+    const productIndex =
+      typeof parsed.productIndex === "number" && Number.isFinite(parsed.productIndex)
+        ? Math.max(0, Math.round(parsed.productIndex))
+        : undefined;
+    const productTitle = typeof parsed.productTitle === "string" ? parsed.productTitle : undefined;
     const quantity =
       typeof parsed.quantity === "number" && Number.isFinite(parsed.quantity)
         ? Math.max(1, Math.min(10, Math.round(parsed.quantity)))
@@ -229,6 +353,40 @@ Example:
         },
       };
     }
+
+    if (intent === "select_product" && opts?.context?.lastProducts?.length) {
+      const selection = resolveProductSelection(trimmed, opts.context.lastProducts, {
+        productIndex,
+        productTitle,
+      });
+      if (selection) {
+        if (selection.needsVariantChoice && !variantId) {
+          return {
+            intent: "select_product",
+            productIndex: selection.productIndex,
+            productTitle: selection.product.title,
+            confidence: "high",
+            needsClarification: true,
+            clarification: {
+              question: `Which size or option for ${selection.product.title}?`,
+              suggestions: selection.product.variants
+                .filter((v) => v.available)
+                .slice(0, 4)
+                .map((v) => v.title),
+            },
+          };
+        }
+        return {
+          intent: "select_product",
+          productIndex: selection.productIndex,
+          productTitle: selection.product.title,
+          variantId: variantId ?? selection.variantId,
+          confidence: "high",
+          needsClarification: false,
+        };
+      }
+    }
+
     if (intent === "product_search" && !normalizedQuery && !needsClarification) {
       return {
         ...buildFallbackPlan(trimmed),
@@ -244,6 +402,8 @@ Example:
       sortKey: intent === "product_search" ? sortKey : undefined,
       reverse: intent === "product_search" ? reverse : undefined,
       variantId,
+      productIndex,
+      productTitle,
       quantity,
       confidence,
       needsClarification,

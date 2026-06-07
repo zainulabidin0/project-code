@@ -45,7 +45,7 @@
   var config = {
     position: "bottom-right",
     color: "#111111",
-    greeting: "Hi! How can I help?",
+    greeting: "What would you like to buy today?",
     storeName: "",
   };
   var panelOpen = false;
@@ -173,7 +173,37 @@
       });
   }
 
-  function renderProducts(container, products, accent) {
+  function renderSuggestionChips(container, suggestions, accent, sendHandler, chipClass) {
+    if (!suggestions || !suggestions.length) return;
+    var wrap = el("div", chipClass || "af-suggestions");
+    wrap.style.display = "flex";
+    wrap.style.flexWrap = "wrap";
+    wrap.style.gap = "6px";
+    wrap.style.marginTop = "8px";
+    suggestions.slice(0, 6).forEach(function (label) {
+      var chip = el("button", "af-suggestion-chip", label);
+      chip.type = "button";
+      chip.style.fontSize = "12px";
+      chip.style.border = "1px solid " + accent;
+      chip.style.background = "#fff";
+      chip.style.color = accent;
+      chip.style.borderRadius = "999px";
+      chip.style.padding = "4px 10px";
+      chip.style.cursor = "pointer";
+      chip.addEventListener("click", function () {
+        sendHandler(label);
+      });
+      wrap.appendChild(chip);
+    });
+    container.appendChild(wrap);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function renderClarificationSuggestions(container, suggestions, accent, sendHandler) {
+    renderSuggestionChips(container, suggestions, accent, sendHandler, "af-suggestions");
+  }
+
+  function renderProducts(container, products, accent, selectedProductId) {
     if (!products || !products.length) return;
     var wrap = el("div", "af-products");
     wrap.style.display = "flex";
@@ -188,6 +218,10 @@
       card.style.border = "1px solid #eee";
       card.style.borderRadius = "10px";
       card.style.padding = "8px";
+      if (selectedProductId && p.id === selectedProductId) {
+        card.style.border = "2px solid " + accent;
+        card.style.background = "#fafafa";
+      }
       if (p.image) {
         var img = document.createElement("img");
         img.src = p.image;
@@ -250,32 +284,6 @@
       }
       card.appendChild(info);
       wrap.appendChild(card);
-    });
-    container.appendChild(wrap);
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function renderClarificationSuggestions(container, suggestions, accent, sendHandler) {
-    if (!suggestions || !suggestions.length) return;
-    var wrap = el("div", "af-suggestions");
-    wrap.style.display = "flex";
-    wrap.style.flexWrap = "wrap";
-    wrap.style.gap = "6px";
-    wrap.style.marginTop = "8px";
-    suggestions.slice(0, 4).forEach(function (label) {
-      var chip = el("button", "af-suggestion-chip", label);
-      chip.type = "button";
-      chip.style.fontSize = "12px";
-      chip.style.border = "1px solid " + accent;
-      chip.style.background = "#fff";
-      chip.style.color = accent;
-      chip.style.borderRadius = "999px";
-      chip.style.padding = "4px 10px";
-      chip.style.cursor = "pointer";
-      chip.addEventListener("click", function () {
-        sendHandler(label);
-      });
-      wrap.appendChild(chip);
     });
     container.appendChild(wrap);
     container.scrollTop = container.scrollHeight;
@@ -361,7 +369,7 @@
     form.style.alignItems = "center";
 
     var input = el("input", "af-input");
-    input.placeholder = "Ask about products…";
+    input.placeholder = "Tell me what you're looking for…";
     input.style.flex = "1";
     input.style.padding = "8px";
     input.style.borderRadius = "10px";
@@ -424,7 +432,14 @@
         var msg = (json.data && json.data.message) || "Unable to reply.";
         appendMsg(list, "assistant", msg);
         if (json.data && json.data.products && json.data.products.length) {
-          renderProducts(list, json.data.products, config.color);
+          var selectedId =
+            json.data.selectedProduct && json.data.selectedProduct.id
+              ? json.data.selectedProduct.id
+              : null;
+          renderProducts(list, json.data.products, config.color, selectedId);
+        }
+        if (json.data && json.data.productSuggestions && json.data.productSuggestions.length) {
+          renderSuggestionChips(list, json.data.productSuggestions, config.color, onSend, "af-product-suggestions");
         }
         if (json.data && json.data.needsClarification && json.data.suggestions) {
           renderClarificationSuggestions(list, json.data.suggestions, config.color, onSend);
