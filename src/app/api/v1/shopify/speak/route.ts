@@ -66,12 +66,14 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("[shopify/speak] TTS failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    const raw = err instanceof Error ? err.message : String(err);
+    console.error("[shopify/speak] TTS failed", { error: raw });
+    const needsTerms = /model_terms_required|terms acceptance/i.test(raw);
     return jsonError(
-      "AI_UNAVAILABLE",
-      err instanceof Error ? err.message : "Text-to-speech failed",
+      needsTerms ? "TTS_TERMS_REQUIRED" : "AI_UNAVAILABLE",
+      needsTerms
+        ? "Groq Orpheus TTS requires one-time terms acceptance in the Groq Console (Playground → Orpheus model)."
+        : raw || "Text-to-speech failed",
       503
     );
   }

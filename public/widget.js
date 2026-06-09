@@ -475,15 +475,33 @@
           },
           body: JSON.stringify({ text: text }),
         });
-        var speakJson = await speakRes.json();
-        if (!speakJson.success || !speakJson.data || !speakJson.data.chunks || !speakJson.data.chunks.length) {
+        var speakJson = await speakRes.json().catch(function () {
+          return null;
+        });
+        if (!speakRes.ok || !speakJson || !speakJson.success) {
+          var errMsg =
+            (speakJson && speakJson.error && speakJson.error.message) ||
+            (speakRes.status === 404
+              ? "Voice reply is not available on this server yet. Redeploy the app with the /speak endpoint."
+              : "Could not generate voice reply (HTTP " + speakRes.status + ").");
+          console.warn("[shopassist] TTS failed", speakRes.status, speakJson);
+          appendMsg(list, "assistant", errMsg);
+          return;
+        }
+        if (!speakJson.data || !speakJson.data.chunks || !speakJson.data.chunks.length) {
+          appendMsg(list, "assistant", "Voice reply was empty. Check Groq TTS settings.");
           return;
         }
         for (var ci = 0; ci < speakJson.data.chunks.length; ci++) {
           await playBase64Wav(speakJson.data.chunks[ci]);
         }
       } catch (speakErr) {
-        return;
+        console.warn("[shopassist] TTS playback error", speakErr);
+        appendMsg(
+          list,
+          "assistant",
+          "Could not play voice reply. Your browser may have blocked audio — try tapping the mic again."
+        );
       }
     }
 
