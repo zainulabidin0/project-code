@@ -338,6 +338,7 @@ export async function POST(req: NextRequest) {
   });
 
   let products: ShopifyProduct[] = [];
+  let includeProductCards = false;
   let usedSearchQuery: string | null = sessionContext.lastSearchQuery ?? null;
   let recovered = false;
   let clarification = intent.clarification;
@@ -351,6 +352,7 @@ export async function POST(req: NextRequest) {
     recovered = searchResult.recovered;
     clarification = undefined;
     sessionContext = applySearchResultsToContext(products, usedSearchQuery, sessionContext);
+    includeProductCards = products.length > 0;
   } else if (!checkoutOnlyTurn && intent.intent === "browse_alternatives") {
     const searchResult = await runProductSearch(
       storefrontStore,
@@ -369,6 +371,7 @@ export async function POST(req: NextRequest) {
     recovered = searchResult.recovered;
     clarification = undefined;
     sessionContext = applySearchResultsToContext(products, usedSearchQuery, sessionContext);
+    includeProductCards = products.length > 0;
   } else if (!checkoutOnlyTurn && intent.intent === "select_product") {
     const catalog = sessionContext.lastProducts ?? [];
 
@@ -444,9 +447,10 @@ export async function POST(req: NextRequest) {
         };
         products = [selected];
       } else {
-        products = sessionContext.lastProducts ?? [];
+        products = [];
       }
     }
+    includeProductCards = products.length > 0;
   } else if (intent.intent === "confirm_add_to_cart" || intent.intent === "add_to_cart") {
     if (
       sessionContext.stage === "awaiting_quantity" &&
@@ -459,6 +463,7 @@ export async function POST(req: NextRequest) {
         selectedQuantity: qty,
       };
       products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
+      includeProductCards = products.length > 0;
     } else {
       const variantId =
         intent.variantId ??
@@ -488,7 +493,8 @@ export async function POST(req: NextRequest) {
           cartAction = afterAdd.cartAction;
           sessionContext = afterAdd.sessionContext;
           assistantMessageOverride = afterAdd.introMessage;
-          products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
+          products = [];
+          includeProductCards = false;
         } catch (err) {
           console.error(LOG_PREFIX, "add to cart failed", {
             variantId,
@@ -537,9 +543,8 @@ export async function POST(req: NextRequest) {
         assistantMessageOverride = checkoutStart.message;
       }
     }
-    if (sessionContext.selectedProduct) {
-      products = [sessionContext.selectedProduct];
-    }
+    products = [];
+    includeProductCards = false;
   } else if (!checkoutOnlyTurn && intent.intent === "show_cart") {
     if (!session.cartToken) {
       assistantMessageOverride = "Your cart is empty right now. Tell me what you'd like to buy!";
@@ -560,22 +565,23 @@ export async function POST(req: NextRequest) {
         };
       }
     }
-    products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
+    products = [];
+    includeProductCards = false;
   } else if (intent.intent === "chitchat" && sessionContext.stage === "awaiting_cart_confirm") {
     sessionContext = {
       ...sessionContext,
       stage: sessionContext.lastProducts?.length ? "presenting_options" : "greeting",
       selectedQuantity: undefined,
     };
-    products = sessionContext.lastProducts ?? [];
+    products = [];
+    includeProductCards = false;
   } else if (intent.intent === "chitchat" && sessionContext.stage === "cart_added_pause") {
     sessionContext = {
       ...sessionContext,
       stage: sessionContext.lastProducts?.length ? "presenting_options" : "greeting",
     };
-    products =
-      sessionContext.lastProducts ??
-      (sessionContext.selectedProduct ? [sessionContext.selectedProduct] : []);
+    products = [];
+    includeProductCards = false;
   } else if (intent.intent === "chitchat" && history.length === 0) {
     sessionContext = { ...sessionContext, stage: "greeting" };
   } else if (sessionContext.stage === "cart_added_pause") {
@@ -586,16 +592,16 @@ export async function POST(req: NextRequest) {
       }).catch(() => null);
       if (summary) cartAction = { cartId: session.cartToken, totalPrice: summary.totalPrice };
     }
-    products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
-  } else if (sessionContext.stage === "awaiting_confirm" && sessionContext.selectedProduct) {
-    if (intent.quantity) {
-      sessionContext = { ...sessionContext, selectedQuantity: intent.quantity };
-    }
-    products = [sessionContext.selectedProduct!];
-  } else if (sessionContext.stage === "presenting_options") {
-    products = sessionContext.lastProducts ?? [];
+    products = [];
+    includeProductCards = false;
   } else {
     products = [];
+    includeProductCards = false;
+  }
+
+  if (checkoutOnlyTurn) {
+    products = [];
+    includeProductCards = false;
   }
 
   clarification = catalogBackedClarification(
@@ -690,10 +696,12 @@ export async function POST(req: NextRequest) {
 
   await saveSessionState(session.id, nextMessages, sessionContext);
 
-  const displayProducts = productsForDisplay(sessionContext, products);
+  const displayProducts = productsForDisplay(products, includeProductCards);
 
   const productSuggestions =
-    sessionContext.stage === "presenting_options" && sessionContext.lastProducts?.length
+    includeProductCards &&
+    sessionContext.stage === "presenting_options" &&
+    sessionContext.lastProducts?.length
       ? buildProductSuggestions(sessionContext.lastProducts)
       : [];
 

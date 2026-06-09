@@ -273,29 +273,12 @@ export function isPurchaseIntent(message: string): boolean {
   );
 }
 
+/** Product cards are shown only on turns where the handler explicitly opts in. */
 export function productsForDisplay(
-  sessionContext: {
-    stage: string;
-    selectedProduct?: ShopifyProduct;
-    lastProducts?: ShopifyProduct[];
-  },
-  products: ShopifyProduct[]
+  products: ShopifyProduct[],
+  includeProductCards: boolean
 ): ShopifyProduct[] {
-  if (sessionContext.stage === "no_results") {
-    return [];
-  }
-  if (
-    sessionContext.selectedProduct &&
-    (sessionContext.stage === "awaiting_confirm" ||
-      sessionContext.stage === "collecting_checkout" ||
-      sessionContext.stage === "checkout_ready" ||
-      sessionContext.stage === "completed")
-  ) {
-    return [sessionContext.selectedProduct];
-  }
-  if (sessionContext.stage === "presenting_options" && sessionContext.lastProducts?.length) {
-    return sessionContext.lastProducts;
-  }
+  if (!includeProductCards) return [];
   return products;
 }
 

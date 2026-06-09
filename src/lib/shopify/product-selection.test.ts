@@ -92,13 +92,11 @@ test("parseRequestedQuantity extracts piece counts", () => {
   assert.equal(parseRequestedQuantity("just one"), undefined);
 });
 
-test("productsForDisplay returns only selected product when awaiting confirm", () => {
+test("productsForDisplay returns products only when opted in", () => {
   const mesh = sampleProducts[0];
   const lighter = sampleProducts[1];
-  const displayed = productsForDisplay(
-    { stage: "awaiting_confirm", selectedProduct: mesh, lastProducts: [lighter, mesh] },
-    [lighter, mesh]
-  );
+  assert.equal(productsForDisplay([lighter, mesh], false).length, 0);
+  const displayed = productsForDisplay([mesh], true);
   assert.equal(displayed.length, 1);
   assert.equal(displayed[0].title, "Lemon Body Wax");
 });
@@ -130,10 +128,6 @@ test("filterProductsBySearchRelevance rejects unrelated Shopify false positives"
   assert.equal(filterProductsBySearchRelevance([sampleProducts[0]], "lemon wax").length, 1);
 });
 
-test("productsForDisplay returns empty list on no_results stage", () => {
-  const displayed = productsForDisplay(
-    { stage: "no_results", selectedProduct: sampleProducts[0], lastProducts: sampleProducts },
-    sampleProducts
-  );
-  assert.equal(displayed.length, 0);
+test("productsForDisplay ignores cached session products when not opted in", () => {
+  assert.equal(productsForDisplay(sampleProducts, false).length, 0);
 });
