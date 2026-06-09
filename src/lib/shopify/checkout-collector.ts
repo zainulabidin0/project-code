@@ -39,6 +39,17 @@ function fieldStep(field: CheckoutField): number {
   return CHECKOUT_FIELD_ORDER.indexOf(field) + 1;
 }
 
+export function isShowSavedDetailsRequest(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  return (
+    /\b(show|what|tell|give|list|display)\b.*\b(my|the|saved)\b.*\b(name|email|phone|contact|number|address|delivery|details?)\b/.test(
+      text
+    ) ||
+    /\b(my\s+(name|email|phone|contact|number|address|details?))\b/.test(text) ||
+    /\bcontact\s*(no\.?|number)\b/.test(text)
+  );
+}
+
 export function isCheckoutIntent(message: string): boolean {
   const text = message.trim().toLowerCase();
   return /\b(checkout|check out|pay now|make payment|place order|complete order|finish order|proceed to pay|proceed to payment|want to pay|ready to pay|bill|payment|order confirm|checkout kr|payment kr|pay kr|order krna|ab pay|ab checkout)\b/i.test(
@@ -158,8 +169,15 @@ export function buildCartAddedCheckoutIntro(cartTotal?: string): string {
   return `Added to your cart!${totalLine}\n\nBefore checkout, I need your delivery details. I'll ask ${CHECKOUT_STEP_COUNT} short questions — reply to each one.\n\n${getCheckoutQuestion("fullName")}`;
 }
 
-export function buildCheckoutReadyMessage(): string {
+export function buildCheckoutReadyMessage(draft?: CheckoutDraft): string {
+  if (draft && !isCheckoutDraftComplete(draft)) {
+    return "I still need a few delivery details before checkout can be prefilled. I'll ask the remaining questions now.";
+  }
   return "All set! Your delivery details are saved.\n\nTap the Complete order button below to open checkout — your name and address will already be filled in.";
+}
+
+export function buildCheckoutApplyFailedMessage(): string {
+  return "I saved your details here, but couldn't push them to Shopify checkout just now. Please say \"checkout\" to try again.";
 }
 
 export function buildCheckoutResumeMessage(field: CheckoutField): string {

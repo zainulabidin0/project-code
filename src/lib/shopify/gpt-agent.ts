@@ -9,6 +9,7 @@ import { parseAgentResponse } from "@/lib/shopify/intent-parser";
 import { getGroqKey, groqChatCompletion, GROQ_CHAT_MODEL } from "@/lib/groq/client";
 import {
   buildCheckoutReadyMessage,
+  buildSavedAddressSummary,
   buildCheckoutStartMessage,
   buildEmptyCartCheckoutMessage,
 } from "@/lib/shopify/checkout-collector";
@@ -54,6 +55,7 @@ function buildSystemPrompt(
     conversationStage?: ConversationStage;
     selectedProduct?: ShopifyProduct;
     selectedQuantity?: number;
+    checkoutDraftSummary?: string;
   }
 ): string {
   let rules = `You are a friendly in-store sales assistant for ${storeName}.
@@ -130,6 +132,20 @@ Rules:
   if (opts.resultMode === "checkout_ready") {
     rules +=
       "\n- All delivery details are saved. Tell the shopper to tap Complete order to finish on the secure checkout page. Do NOT paste a raw URL.";
+    if (opts.checkoutDraftSummary) {
+      rules +=
+        "\n- If the shopper asks about their name, phone, email, or address, answer using ONLY the saved delivery details below. Never say you do not have information that is listed there.";
+    }
+  }
+  if (
+    (opts.resultMode === "confirming_saved_address" || opts.resultMode === "collecting_checkout") &&
+    opts.checkoutDraftSummary
+  ) {
+    rules +=
+      "\n- If the shopper asks about their saved delivery details, answer using ONLY the saved delivery details below.";
+  }
+  if (opts.checkoutDraftSummary) {
+    rules += `\n- Saved delivery details:\n${opts.checkoutDraftSummary}`;
   }
   if (opts.resultMode === "no_results") {
     const searched = opts.searchedQuery?.trim();
@@ -358,6 +374,9 @@ export async function runAgent(params: {
   const cartHint = params.cartAction
     ? `Latest cart: total ${params.cartAction.totalPrice ?? "n/a"}, checkout URL: ${params.cartAction.checkoutUrl}`
     : "";
+  const checkoutDraftSummary = params.sessionContext?.checkoutDraft
+    ? buildSavedAddressSummary(params.sessionContext.checkoutDraft)
+    : undefined;
 
   const messages = [
     {
@@ -372,6 +391,7 @@ export async function runAgent(params: {
         conversationStage: params.conversationStage,
         selectedProduct: params.selectedProduct,
         selectedQuantity: params.sessionContext?.selectedQuantity,
+        checkoutDraftSummary,
       }),
     },
     ...params.history.map((m) => ({ role: m.role, content: m.content })),
@@ -380,6 +400,10 @@ export async function runAgent(params: {
       content: `${params.userMessage}\n\nProduct context:\n${JSON.stringify(params.products).slice(0, 3000)}${
         params.cartLines?.length
           ? `\n\nCart lines:\n${JSON.stringify(params.cartLines).slice(0, 2000)}`
+          : ""
+      }${
+        checkoutDraftSummary
+          ? `\n\nSaved delivery details:\n${checkoutDraftSummary}`
           : ""
       }`,
     },

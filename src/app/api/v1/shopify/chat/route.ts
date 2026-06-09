@@ -19,7 +19,6 @@ import {
   searchProducts,
   addToCart,
   applyCheckoutDetailsToCart,
-  getCartCheckoutUrl,
   getCartSummary,
   getCartWithLines,
   type StorefrontStore,
@@ -29,13 +28,16 @@ import { recoverSearchPlan } from "@/lib/shopify/query-recovery";
 import {
   beginCheckoutFresh,
   beginCheckoutWithSavedDraft,
+  buildCheckoutApplyFailedMessage,
   buildCheckoutReadyMessage,
   buildCheckoutResumeMessage,
   buildEmptyCartCheckoutMessage,
   buildSavedAddressSummary,
   buildSessionAfterCartAdd,
+  buildUseSavedAddressPrompt,
   DEFAULT_COUNTRY_CODE,
   isCheckoutDraftComplete,
+  isShowSavedDetailsRequest,
   normalizePhoneE164,
   processCheckoutAnswer,
   toCartCheckoutDetails,
@@ -356,7 +358,7 @@ export async function POST(req: NextRequest) {
           checkoutUrl: applied.checkoutUrl,
           cartId: session.cartToken,
         };
-        assistantMessageOverride = step.message;
+        assistantMessageOverride = buildCheckoutReadyMessage(step.draft);
 
         try {
           const draft = step.draft;
@@ -383,21 +385,32 @@ export async function POST(req: NextRequest) {
         console.error(LOG_PREFIX, "apply checkout details failed", {
           error: err instanceof Error ? err.message : String(err),
         });
-        const fallbackUrl = await getCartCheckoutUrl({
-          store: storefrontStore,
-          cartId: session.cartToken,
-        }).catch(() => null);
-        if (fallbackUrl) {
-          cartAction = { checkoutUrl: fallbackUrl, cartId: session.cartToken };
-        }
-        assistantMessageOverride =
-          "I saved what I could, but some delivery details couldn't be applied automatically. Tap Complete order to finish the rest on checkout.";
         sessionContext = {
           ...sessionContext,
           checkoutDraft: step.draft,
-          stage: "checkout_ready",
+          checkoutField: undefined,
+          stage: "collecting_checkout",
         };
+        assistantMessageOverride = buildCheckoutApplyFailedMessage();
       }
+    }
+  }
+
+  if (
+    sessionContext.stage === "checkout_ready" &&
+    session.cartToken &&
+    !cartAction?.checkoutUrl
+  ) {
+    const summary = await getCartSummary({
+      store: storefrontStore,
+      cartId: session.cartToken,
+    }).catch(() => null);
+    if (summary) {
+      cartAction = {
+        checkoutUrl: summary.checkoutUrl,
+        cartId: session.cartToken,
+        totalPrice: summary.totalPrice,
+      };
     }
   }
 
@@ -583,6 +596,14 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+  } else if (
+    !checkoutOnlyTurn &&
+    sessionContext.checkoutDraft &&
+    isShowSavedDetailsRequest(parsed.data.message)
+  ) {
+    assistantMessageOverride = `Here's what I have saved:\n\n${buildSavedAddressSummary(sessionContext.checkoutDraft)}`;
+    products = [];
+    includeProductCards = false;
   } else if (!checkoutOnlyTurn && intent.intent === "start_checkout") {
     if (!session.cartToken) {
       assistantMessageOverride = buildEmptyCartCheckoutMessage();
@@ -600,7 +621,36 @@ export async function POST(req: NextRequest) {
             totalPrice: summary.totalPrice,
           };
         }
-        assistantMessageOverride = buildCheckoutReadyMessage();
+        assistantMessageOverride = buildCheckoutReadyMessage(sessionContext.checkoutDraft);
+      } else if (
+        sessionContext.stage === "collecting_checkout" &&
+        !sessionContext.checkoutField &&
+        sessionContext.checkoutDraft &&
+        isCheckoutDraftComplete(sessionContext.checkoutDraft)
+      ) {
+        try {
+          const applied = await applyCheckoutDetailsToCart({
+            store: storefrontStore,
+            cartId: session.cartToken,
+            details: toCartCheckoutDetails(sessionContext.checkoutDraft),
+          });
+          sessionContext = {
+            ...sessionContext,
+            stage: "checkout_ready",
+            checkoutField: undefined,
+          };
+          cartAction = {
+            checkoutUrl: applied.checkoutUrl,
+            cartId: session.cartToken,
+            totalPrice: summary?.totalPrice,
+          };
+          assistantMessageOverride = buildCheckoutReadyMessage(sessionContext.checkoutDraft);
+        } catch (err) {
+          console.error(LOG_PREFIX, "retry apply checkout details failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          assistantMessageOverride = buildCheckoutApplyFailedMessage();
+        }
       } else if (
         sessionContext.stage === "collecting_checkout" &&
         sessionContext.checkoutField
@@ -628,19 +678,12 @@ export async function POST(req: NextRequest) {
               cartId: session.cartToken,
               totalPrice: summary?.totalPrice,
             };
-            assistantMessageOverride = buildCheckoutReadyMessage();
+            assistantMessageOverride = buildCheckoutReadyMessage(draft);
           } catch (err) {
             console.error(LOG_PREFIX, "apply saved draft to cart failed", {
               error: err instanceof Error ? err.message : String(err),
             });
-            const freshStart = beginCheckoutFresh(summary?.totalPrice ?? undefined);
-            sessionContext = {
-              ...sessionContext,
-              stage: "collecting_checkout",
-              checkoutDraft: freshStart.draft,
-              checkoutField: freshStart.field,
-            };
-            assistantMessageOverride = freshStart.message;
+            assistantMessageOverride = `${buildUseSavedAddressPrompt(draft, summary?.totalPrice ?? undefined)}\n\n(I had trouble applying your details — please reply yes to try again, or no to enter a new address.)`;
           }
         }
       } else {
