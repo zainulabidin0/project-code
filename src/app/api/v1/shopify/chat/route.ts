@@ -348,6 +348,11 @@ export async function POST(req: NextRequest) {
           cartId: session.cartToken,
           details: toCartCheckoutDetails(step.draft),
         });
+        console.log(LOG_PREFIX, "checkout prefill applied", {
+          cartId: session.cartToken,
+          checkoutUrl: applied.checkoutUrl,
+          source: "collecting_checkout_complete",
+        });
         sessionContext = {
           ...sessionContext,
           checkoutDraft: step.draft,
@@ -634,6 +639,11 @@ export async function POST(req: NextRequest) {
             cartId: session.cartToken,
             details: toCartCheckoutDetails(sessionContext.checkoutDraft),
           });
+          console.log(LOG_PREFIX, "checkout prefill applied", {
+            cartId: session.cartToken,
+            checkoutUrl: applied.checkoutUrl,
+            source: "start_checkout_retry",
+          });
           sessionContext = {
             ...sessionContext,
             stage: "checkout_ready",
@@ -667,6 +677,11 @@ export async function POST(req: NextRequest) {
               store: storefrontStore,
               cartId: session.cartToken,
               details: toCartCheckoutDetails(draft),
+            });
+            console.log(LOG_PREFIX, "checkout prefill applied", {
+              cartId: session.cartToken,
+              checkoutUrl: applied.checkoutUrl,
+              source: "confirming_saved_address",
             });
             sessionContext = {
               ...sessionContext,

@@ -107,14 +107,44 @@ mutation AddCartLines($cartId: ID!, $lines: [CartLineInput!]!) {
 }
 `;
 
+const CART_DELIVERY_ADDRESS_FIELDS = `
+      delivery {
+        addresses {
+          id
+          selected
+          oneTimeUse
+          address {
+            ... on CartDeliveryAddress {
+              firstName
+              lastName
+              address1
+              address2
+              city
+              provinceCode
+              zip
+              countryCode
+              phone
+            }
+          }
+        }
+      }
+`;
+
 const CART_BUYER_IDENTITY_UPDATE_MUTATION = `
 mutation CartBuyerIdentityUpdate($cartId: ID!, $buyerIdentity: CartBuyerIdentityInput!) {
   cartBuyerIdentityUpdate(cartId: $cartId, buyerIdentity: $buyerIdentity) {
     cart {
       id
       checkoutUrl
+      buyerIdentity {
+        email
+        phone
+        countryCode
+      }
+      ${CART_DELIVERY_ADDRESS_FIELDS}
     }
     userErrors { field message }
+    warnings { message code target }
   }
 }
 `;
@@ -125,8 +155,15 @@ mutation CartDeliveryAddressesAdd($cartId: ID!, $addresses: [CartSelectableAddre
     cart {
       id
       checkoutUrl
+      buyerIdentity {
+        email
+        phone
+        countryCode
+      }
+      ${CART_DELIVERY_ADDRESS_FIELDS}
     }
     userErrors { field message }
+    warnings { message code target }
   }
 }
 `;
@@ -137,8 +174,30 @@ mutation CartDeliveryAddressesReplace($cartId: ID!, $addresses: [CartSelectableA
     cart {
       id
       checkoutUrl
+      buyerIdentity {
+        email
+        phone
+        countryCode
+      }
+      ${CART_DELIVERY_ADDRESS_FIELDS}
     }
     userErrors { field message }
+    warnings { message code target }
+  }
+}
+`;
+
+const CART_CHECKOUT_PREFILL_QUERY = `
+query CartCheckoutPrefill($id: ID!) {
+  cart(id: $id) {
+    id
+    checkoutUrl
+    buyerIdentity {
+      email
+      phone
+      countryCode
+    }
+    ${CART_DELIVERY_ADDRESS_FIELDS}
   }
 }
 `;
@@ -500,14 +559,123 @@ export type CartCheckoutDetails = {
   zip: string;
 };
 
+const LOG_PREFIX = "[storefront/checkout]";
+
+type CartDeliveryAddressNode = {
+  firstName?: string | null;
+  lastName?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  city?: string | null;
+  provinceCode?: string | null;
+  zip?: string | null;
+  countryCode?: string | null;
+  phone?: string | null;
+};
+
+type CartPrefillSnapshot = {
+  buyerIdentity: {
+    email?: string | null;
+    phone?: string | null;
+    countryCode?: string | null;
+  } | null;
+  deliveryAddresses: Array<{
+    id?: string;
+    selected?: boolean;
+    oneTimeUse?: boolean;
+    address: CartDeliveryAddressNode | null;
+  }>;
+};
+
+type CartSelectableAddressNode = {
+  id?: string;
+  selected?: boolean;
+  oneTimeUse?: boolean;
+  address: CartDeliveryAddressNode | null;
+};
+
+type CartPrefillCart = {
+  id: string;
+  checkoutUrl: string;
+  buyerIdentity?: CartPrefillSnapshot["buyerIdentity"];
+  delivery?: {
+    addresses: CartSelectableAddressNode[];
+  } | null;
+};
+
 type DeliveryAddressMutationResult = {
-  cart: { id: string; checkoutUrl: string } | null;
+  mutation: "cartDeliveryAddressesReplace" | "cartDeliveryAddressesAdd";
+  cart: CartPrefillCart | null;
   userErrors: Array<{ field?: string[]; message: string }>;
+  warnings: Array<{ message: string; code?: string; target?: string }>;
 };
 
 function isReplaceMutationUnavailable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("cartDeliveryAddressesReplace");
+}
+
+function snapshotDeliveryAddresses(cart: CartPrefillCart | null | undefined): CartPrefillSnapshot {
+  const addresses = cart?.delivery?.addresses ?? [];
+  return {
+    buyerIdentity: cart?.buyerIdentity ?? null,
+    deliveryAddresses: addresses.map((entry) => ({
+      id: entry.id,
+      selected: entry.selected,
+      oneTimeUse: entry.oneTimeUse,
+      address: entry.address ?? null,
+    })),
+  };
+}
+
+function summarizePrefillSnapshot(label: string, snapshot: CartPrefillSnapshot) {
+  const selected =
+    snapshot.deliveryAddresses.find((entry) => entry.selected) ??
+    snapshot.deliveryAddresses[0];
+  const address = selected?.address;
+  return {
+    label,
+    buyerEmail: snapshot.buyerIdentity?.email ?? null,
+    buyerPhone: snapshot.buyerIdentity?.phone ?? null,
+    buyerCountryCode: snapshot.buyerIdentity?.countryCode ?? null,
+    deliveryAddressCount: snapshot.deliveryAddresses.length,
+    selectedDeliveryAddress: address
+      ? {
+          firstName: address.firstName ?? null,
+          lastName: address.lastName ?? null,
+          address1: address.address1 ?? null,
+          city: address.city ?? null,
+          provinceCode: address.provinceCode ?? null,
+          zip: address.zip ?? null,
+          countryCode: address.countryCode ?? null,
+          phone: address.phone ?? null,
+        }
+      : null,
+  };
+}
+
+function hasDeliveryAddressOnCart(snapshot: CartPrefillSnapshot): boolean {
+  return snapshot.deliveryAddresses.some((entry) => {
+    const address = entry.address;
+    return Boolean(address?.address1?.trim() || address?.city?.trim());
+  });
+}
+
+async function readCartCheckoutPrefill(
+  store: StorefrontStore,
+  cartId: string
+): Promise<CartPrefillSnapshot | null> {
+  const data = await storefrontFetch<{
+    cart: CartPrefillCart | null;
+  }>(store, CART_CHECKOUT_PREFILL_QUERY, { id: cartId }).catch((error) => {
+    console.warn(LOG_PREFIX, "prefill verification query failed", {
+      cartId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  if (!data?.cart) return null;
+  return snapshotDeliveryAddresses(data.cart);
 }
 
 async function applyDeliveryAddressToCart(params: {
@@ -517,24 +685,32 @@ async function applyDeliveryAddressToCart(params: {
 }): Promise<DeliveryAddressMutationResult> {
   try {
     const replaceData = await storefrontFetch<{
-      cartDeliveryAddressesReplace: DeliveryAddressMutationResult;
+      cartDeliveryAddressesReplace: Omit<DeliveryAddressMutationResult, "mutation">;
     }>(params.store, CART_DELIVERY_ADDRESSES_REPLACE_MUTATION, {
       cartId: params.cartId,
       addresses: params.addresses,
     });
-    return replaceData.cartDeliveryAddressesReplace;
+    return {
+      mutation: "cartDeliveryAddressesReplace",
+      ...replaceData.cartDeliveryAddressesReplace,
+      warnings: replaceData.cartDeliveryAddressesReplace.warnings ?? [],
+    };
   } catch (error) {
     if (!isReplaceMutationUnavailable(error)) throw error;
-    console.warn("[storefront] cartDeliveryAddressesReplace unavailable, falling back to cartDeliveryAddressesAdd");
+    console.warn(LOG_PREFIX, "cartDeliveryAddressesReplace unavailable, falling back to cartDeliveryAddressesAdd");
   }
 
   const addData = await storefrontFetch<{
-    cartDeliveryAddressesAdd: DeliveryAddressMutationResult;
+    cartDeliveryAddressesAdd: Omit<DeliveryAddressMutationResult, "mutation">;
   }>(params.store, CART_DELIVERY_ADDRESSES_ADD_MUTATION, {
     cartId: params.cartId,
     addresses: params.addresses,
   });
-  return addData.cartDeliveryAddressesAdd;
+  return {
+    mutation: "cartDeliveryAddressesAdd",
+    ...addData.cartDeliveryAddressesAdd,
+    warnings: addData.cartDeliveryAddressesAdd.warnings ?? [],
+  };
 }
 
 export async function applyCheckoutDetailsToCart(params: {
@@ -543,11 +719,43 @@ export async function applyCheckoutDetailsToCart(params: {
   details: CartCheckoutDetails;
 }): Promise<{ checkoutUrl: string }> {
   const deliveryAddressInput = buildSelectableDeliveryAddress(params.details);
+  const sentAddress = deliveryAddressInput.address.deliveryAddress;
+
+  console.log(LOG_PREFIX, "apply starting", {
+    cartId: params.cartId,
+    storeId: params.store.id,
+    sent: {
+      email: params.details.email,
+      phone: params.details.phone,
+      countryCode: params.details.countryCode,
+      firstName: params.details.firstName,
+      lastName: params.details.lastName,
+      address1: params.details.address1,
+      city: params.details.city,
+      provinceCode: params.details.provinceCode,
+      zip: params.details.zip,
+      validationStrategy: deliveryAddressInput.validationStrategy,
+      oneTimeUse: deliveryAddressInput.oneTimeUse,
+      selected: deliveryAddressInput.selected,
+    },
+  });
 
   const addressResult = await applyDeliveryAddressToCart({
     store: params.store,
     cartId: params.cartId,
     addresses: [deliveryAddressInput],
+  });
+
+  console.log(LOG_PREFIX, "delivery address mutation result", {
+    cartId: params.cartId,
+    mutation: addressResult.mutation,
+    userErrors: addressResult.userErrors,
+    warnings: addressResult.warnings,
+    cartSnapshot: summarizePrefillSnapshot(
+      "after-delivery-mutation",
+      snapshotDeliveryAddresses(addressResult.cart)
+    ),
+    sentAddress,
   });
 
   if (addressResult.userErrors.length) {
@@ -558,8 +766,9 @@ export async function applyCheckoutDetailsToCart(params: {
 
   const identityData = await storefrontFetch<{
     cartBuyerIdentityUpdate: {
-      cart: { id: string; checkoutUrl: string } | null;
+      cart: CartPrefillCart | null;
       userErrors: Array<{ field?: string[]; message: string }>;
+      warnings: Array<{ message: string; code?: string; target?: string }>;
     };
   }>(params.store, CART_BUYER_IDENTITY_UPDATE_MUTATION, {
     cartId: params.cartId,
@@ -571,14 +780,42 @@ export async function applyCheckoutDetailsToCart(params: {
   });
 
   const identityErrors = identityData.cartBuyerIdentityUpdate.userErrors;
+  console.log(LOG_PREFIX, "buyer identity mutation result", {
+    cartId: params.cartId,
+    userErrors: identityErrors,
+    warnings: identityData.cartBuyerIdentityUpdate.warnings ?? [],
+    cartSnapshot: summarizePrefillSnapshot(
+      "after-identity-mutation",
+      snapshotDeliveryAddresses(identityData.cartBuyerIdentityUpdate.cart)
+    ),
+  });
+
   if (identityErrors.length) {
     throw new Error(
       `Buyer identity: ${identityErrors.map((e) => e.message).join("; ")}`
     );
   }
 
+  const verifiedSnapshot = await readCartCheckoutPrefill(params.store, params.cartId);
+  if (verifiedSnapshot) {
+    const summary = summarizePrefillSnapshot("verified-cart-query", verifiedSnapshot);
+    console.log(LOG_PREFIX, "prefill verification", {
+      cartId: params.cartId,
+      ...summary,
+      deliveryAddressStoredOnCart: hasDeliveryAddressOnCart(verifiedSnapshot),
+      note:
+        "If deliveryAddressStoredOnCart is true but Shopify checkout fields are empty, the store likely needs Checkout Extensibility for address prefill.",
+    });
+  }
+
   const cart = addressResult.cart ?? identityData.cartBuyerIdentityUpdate.cart;
   if (!cart?.checkoutUrl) throw new Error("Checkout URL unavailable");
+
+  console.log(LOG_PREFIX, "apply complete", {
+    cartId: params.cartId,
+    checkoutUrl: cart.checkoutUrl,
+  });
+
   return { checkoutUrl: cart.checkoutUrl };
 }
 
