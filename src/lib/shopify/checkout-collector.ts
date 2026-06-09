@@ -56,7 +56,7 @@ const PK_PROVINCE_CODES: Record<string, string> = {
   kp: "KP",
   balochistan: "BA",
   ba: "BA",
-  "islamabad": "IS",
+  islamabad: "IS",
   "islamabad capital territory": "IS",
   is: "IS",
   ict: "IS",
@@ -66,6 +66,45 @@ const PK_PROVINCE_CODES: Record<string, string> = {
   ajk: "JK",
   "azad kashmir": "JK",
   jk: "JK",
+};
+
+/** Major PK cities → Shopify provinceCode (shoppers often say city instead of province). */
+const PK_CITY_TO_PROVINCE: Record<string, string> = {
+  lahore: "PB",
+  faisalabad: "PB",
+  rawalpindi: "PB",
+  multan: "PB",
+  gujranwala: "PB",
+  sialkot: "PB",
+  sargodha: "PB",
+  bahawalpur: "PB",
+  gujrat: "PB",
+  sheikhupura: "PB",
+  karachi: "SD",
+  hyderabad: "SD",
+  sukkur: "SD",
+  larkana: "SD",
+  peshawar: "KP",
+  mardan: "KP",
+  abbottabad: "KP",
+  mingora: "KP",
+  quetta: "BA",
+  turbat: "BA",
+  islamabad: "IS",
+  gilgit: "GB",
+  skardu: "GB",
+  muzaffarabad: "JK",
+  mirpur: "JK",
+};
+
+const PK_DEFAULT_ZIP_BY_PROVINCE: Record<string, string> = {
+  PB: "54000",
+  SD: "75000",
+  KP: "25000",
+  BA: "87300",
+  IS: "44000",
+  GB: "15700",
+  JK: "12350",
 };
 
 export function createInitialCheckoutDraft(): CheckoutDraft {
@@ -133,14 +172,44 @@ export function buildEmptyCartCheckoutMessage(): string {
 
 export function splitFullName(fullName: string): { firstName: string; lastName: string } {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return { firstName: "Customer", lastName: "" };
-  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  if (parts.length === 0) return { firstName: "Customer", lastName: "Customer" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: parts[0] };
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
 }
 
-export function normalizeProvinceCode(province: string): string {
-  const key = province.trim().toLowerCase();
-  return PK_PROVINCE_CODES[key] ?? province.trim().slice(0, 8).toUpperCase();
+export function normalizeProvinceCode(province: string, city?: string): string {
+  const provinceKey = province.trim().toLowerCase();
+  if (provinceKey && PK_PROVINCE_CODES[provinceKey]) {
+    return PK_PROVINCE_CODES[provinceKey];
+  }
+  if (provinceKey && PK_CITY_TO_PROVINCE[provinceKey]) {
+    return PK_CITY_TO_PROVINCE[provinceKey];
+  }
+
+  const cityKey = (city ?? "").trim().toLowerCase();
+  if (cityKey && PK_CITY_TO_PROVINCE[cityKey]) {
+    return PK_CITY_TO_PROVINCE[cityKey];
+  }
+
+  if (/punjab/i.test(province)) return "PB";
+  if (/sindh/i.test(province)) return "SD";
+  if (/khyber|kpk/i.test(province)) return "KP";
+  if (/baloch/i.test(province)) return "BA";
+  if (/islamabad|ict/i.test(province)) return "IS";
+  if (/gilgit/i.test(province)) return "GB";
+  if (/kashmir|ajk/i.test(province)) return "JK";
+
+  if (cityKey && PK_CITY_TO_PROVINCE[cityKey]) {
+    return PK_CITY_TO_PROVINCE[cityKey];
+  }
+
+  return "PB";
+}
+
+export function normalizeZipForPakistan(zip: string, provinceCode: string): string {
+  const digits = zip.replace(/\D/g, "");
+  if (digits.length === 5) return digits;
+  return PK_DEFAULT_ZIP_BY_PROVINCE[provinceCode] ?? "54000";
 }
 
 export function parseCheckoutAnswer(
@@ -351,24 +420,44 @@ export function toCartCheckoutDetails(draft: CheckoutDraft) {
   const { firstName, lastName } = splitFullName(draft.fullName ?? "Customer");
   const countryCode = draft.countryCode ?? DEFAULT_COUNTRY_CODE;
   const phone = normalizePhoneE164(draft.phone ?? "", countryCode);
+  const city = (draft.city ?? "").trim();
+  const provinceCode = normalizeProvinceCode(draft.province ?? "", city);
+  const zip =
+    countryCode === "PK"
+      ? normalizeZipForPakistan(draft.zip ?? "", provinceCode)
+      : (draft.zip ?? "").trim();
+
   return {
     email: draft.email ?? "",
     phone,
     countryCode,
     firstName,
-    lastName,
-    address1: draft.address1 ?? "",
-    address2: draft.address2 || undefined,
-    city: draft.city ?? "",
-    provinceCode: normalizeProvinceCode(draft.province ?? ""),
-    zip: draft.zip ?? "",
+    lastName: lastName || firstName || "Customer",
+    address1: (draft.address1 ?? "").trim(),
+    address2: draft.address2?.trim() || undefined,
+    city,
+    provinceCode,
+    zip,
   };
 }
 
-export function buildSelectableDeliveryAddress(details: ReturnType<typeof toCartCheckoutDetails>) {
+export type DeliveryAddressPayload = {
+  firstName: string;
+  lastName: string;
+  address1: string;
+  address2?: string;
+  city: string;
+  provinceCode: string;
+  zip: string;
+  countryCode: string;
+  phone: string;
+};
+
+export function buildSelectableDeliveryAddress(details: DeliveryAddressPayload) {
   return {
     selected: true,
     oneTimeUse: true,
+    validationStrategy: "COUNTRY_CODE_ONLY" as const,
     address: {
       deliveryAddress: {
         firstName: details.firstName,

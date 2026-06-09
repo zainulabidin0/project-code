@@ -6,6 +6,8 @@ import {
   createInitialCheckoutDraft,
   getNextCheckoutField,
   isCheckoutIntent,
+  normalizeProvinceCode,
+  normalizeZipForPakistan,
   parseCheckoutAnswer,
   processCheckoutAnswer,
   splitFullName,
@@ -65,11 +67,40 @@ test("buildSelectableDeliveryAddress nests fields under deliveryAddress", () => 
   });
   const payload = buildSelectableDeliveryAddress(details);
   assert.equal(payload.address.deliveryAddress.firstName, "Ali");
+  assert.equal(payload.address.deliveryAddress.provinceCode, "PB");
   assert.equal(payload.address.deliveryAddress.city, "Lahore");
   assert.equal(payload.address.deliveryAddress.phone, "+923001234567");
+  assert.equal(payload.validationStrategy, "COUNTRY_CODE_ONLY");
+});
+
+test("normalizeProvinceCode maps cities and province names for Pakistan", () => {
+  assert.equal(normalizeProvinceCode("Punjab"), "PB");
+  assert.equal(normalizeProvinceCode("Lahore"), "PB");
+  assert.equal(normalizeProvinceCode("", "Karachi"), "SD");
+  assert.equal(normalizeProvinceCode("Sindh", "Karachi"), "SD");
+});
+
+test("normalizeZipForPakistan uses province default when zip is invalid", () => {
+  assert.equal(normalizeZipForPakistan("54000", "PB"), "54000");
+  assert.equal(normalizeZipForPakistan("bad", "SD"), "75000");
+});
+
+test("toCartCheckoutDetails infers province from city", () => {
+  const details = toCartCheckoutDetails({
+    countryCode: "PK",
+    fullName: "Kain",
+    email: "kain@gmail.com",
+    phone: "03001234567",
+    address1: "House 12 Street 5",
+    city: "Lahore",
+    province: "Lahore",
+    zip: "54000",
+  });
+  assert.equal(details.provinceCode, "PB");
+  assert.equal(details.lastName, "Kain");
 });
 
 test("splitFullName handles single and multi part names", () => {
-  assert.deepEqual(splitFullName("Ali"), { firstName: "Ali", lastName: "" });
+  assert.deepEqual(splitFullName("Ali"), { firstName: "Ali", lastName: "Ali" });
   assert.deepEqual(splitFullName("Ali Khan"), { firstName: "Ali", lastName: "Khan" });
 });

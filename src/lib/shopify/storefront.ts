@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { shopifyStores } from "@/lib/db/schema";
+import { buildSelectableDeliveryAddress } from "@/lib/shopify/checkout-collector";
 import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
 import type { CartLineItem, CartSummaryWithLines, SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
 
 /** Storefront API version (tokenless requires 2024-04+). */
-const STOREFRONT_API_VERSION = "2025-01";
+const STOREFRONT_API_VERSION = "2025-10";
 
 export type ParsedFilters = {
   query: string;
@@ -492,23 +493,24 @@ export async function applyCheckoutDetailsToCart(params: {
   cartId: string;
   details: CartCheckoutDetails;
 }): Promise<{ checkoutUrl: string }> {
-  const deliveryAddressInput = {
-    selected: true,
-    oneTimeUse: true,
-    address: {
-      deliveryAddress: {
-        firstName: params.details.firstName,
-        lastName: params.details.lastName,
-        address1: params.details.address1,
-        address2: params.details.address2 || undefined,
-        city: params.details.city,
-        provinceCode: params.details.provinceCode,
-        zip: params.details.zip,
-        countryCode: params.details.countryCode,
-        phone: params.details.phone,
-      },
-    },
-  };
+  const deliveryAddressInput = buildSelectableDeliveryAddress(params.details);
+
+  const addressData = await storefrontFetch<{
+    cartDeliveryAddressesReplace: {
+      cart: { id: string; checkoutUrl: string } | null;
+      userErrors: Array<{ field?: string[]; message: string }>;
+    };
+  }>(params.store, CART_DELIVERY_ADDRESSES_REPLACE_MUTATION, {
+    cartId: params.cartId,
+    addresses: [deliveryAddressInput],
+  });
+
+  const addressErrors = addressData.cartDeliveryAddressesReplace.userErrors;
+  if (addressErrors.length) {
+    throw new Error(
+      `Delivery address: ${addressErrors.map((e) => e.message).join("; ")}`
+    );
+  }
 
   const identityData = await storefrontFetch<{
     cartBuyerIdentityUpdate: {
@@ -528,23 +530,6 @@ export async function applyCheckoutDetailsToCart(params: {
   if (identityErrors.length) {
     throw new Error(
       `Buyer identity: ${identityErrors.map((e) => e.message).join("; ")}`
-    );
-  }
-
-  const addressData = await storefrontFetch<{
-    cartDeliveryAddressesReplace: {
-      cart: { id: string; checkoutUrl: string } | null;
-      userErrors: Array<{ field?: string[]; message: string }>;
-    };
-  }>(params.store, CART_DELIVERY_ADDRESSES_REPLACE_MUTATION, {
-    cartId: params.cartId,
-    addresses: [deliveryAddressInput],
-  });
-
-  const addressErrors = addressData.cartDeliveryAddressesReplace.userErrors;
-  if (addressErrors.length) {
-    throw new Error(
-      `Delivery address: ${addressErrors.map((e) => e.message).join("; ")}`
     );
   }
 
