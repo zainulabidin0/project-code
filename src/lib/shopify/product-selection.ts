@@ -34,6 +34,58 @@ export function buildProductSuggestions(products: ShopifyProduct[]): string[] {
   return products.map(buildProductSuggestionLabel);
 }
 
+const SEARCH_RELEVANCE_STOP_WORDS =
+  /\b(show|me|some|please|can|you|i|want|find|search|for|the|a|an|do|sell|have|carry|buy|get|any|products?|items?|latest|new|newest|popular|best)\b/gi;
+
+const BROAD_SEARCH_QUERIES = new Set(["", "*", "products"]);
+
+/** Meaningful keywords from a Shopify search query for relevance filtering. */
+export function extractSearchKeywords(query: string): string[] {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/gi, " ")
+    .replace(SEARCH_RELEVANCE_STOP_WORDS, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized || BROAD_SEARCH_QUERIES.has(normalized)) return [];
+  return normalized.split(/\s+/).filter((w) => w.length >= 2);
+}
+
+export function shouldFilterSearchResults(query: string | null | undefined): boolean {
+  const keywords = extractSearchKeywords(query ?? "");
+  return keywords.length > 0;
+}
+
+function scoreProductRelevance(product: ShopifyProduct, keywords: string[]): number {
+  const haystack = `${product.title} ${product.description ?? ""}`.toLowerCase();
+  let score = 0;
+  for (const kw of keywords) {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(haystack) || haystack.includes(kw)) {
+      score += kw.length;
+    }
+  }
+  return score;
+}
+
+export function isProductRelevantToQuery(product: ShopifyProduct, query: string): boolean {
+  const keywords = extractSearchKeywords(query);
+  if (!keywords.length) return true;
+  const score = scoreProductRelevance(product, keywords);
+  const minScore = keywords.length === 1 ? Math.max(3, keywords[0].length) : 3;
+  return score >= minScore;
+}
+
+/** Drop Shopify false-positive hits that do not mention the searched product terms. */
+export function filterProductsBySearchRelevance(
+  products: ShopifyProduct[],
+  query: string
+): ShopifyProduct[] {
+  const keywords = extractSearchKeywords(query);
+  if (!keywords.length) return products;
+  return products.filter((p) => isProductRelevantToQuery(p, query));
+}
+
 export function pickDefaultVariant(product: ShopifyProduct): string | undefined {
   const available = product.variants.filter((v) => v.available);
   return available.length === 1 ? available[0].id : undefined;
@@ -229,6 +281,9 @@ export function productsForDisplay(
   },
   products: ShopifyProduct[]
 ): ShopifyProduct[] {
+  if (sessionContext.stage === "no_results") {
+    return [];
+  }
   if (
     sessionContext.selectedProduct &&
     (sessionContext.stage === "awaiting_confirm" ||

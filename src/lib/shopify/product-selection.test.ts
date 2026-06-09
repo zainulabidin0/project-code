@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildProductSuggestionLabel,
+  filterProductsBySearchRelevance,
   isBrowseAlternativesRequest,
   isConfirmYes,
   isDirectCartAddRequest,
+  isProductRelevantToQuery,
   parseRequestedQuantity,
   productsForDisplay,
   resolveProductSelection,
@@ -113,4 +115,25 @@ test("isBrowseAlternativesRequest detects explicit browse phrases only", () => {
   assert.equal(isBrowseAlternativesRequest("yes"), false);
   assert.equal(isBrowseAlternativesRequest("show me what else you have"), true);
   assert.equal(isBrowseAlternativesRequest("candle wax"), false);
+});
+
+test("filterProductsBySearchRelevance rejects unrelated Shopify false positives", () => {
+  const meshNebulizer: ShopifyProduct = {
+    ...sampleProducts[0],
+    title: "Portable Mesh Nebulizer | Roschic Portable Mesh Nebulizer",
+    description: "Portable mesh nebulizer for respiratory care",
+  };
+
+  assert.equal(isProductRelevantToQuery(meshNebulizer, "butterflies"), false);
+  assert.equal(filterProductsBySearchRelevance([meshNebulizer], "butterflies").length, 0);
+  assert.equal(isProductRelevantToQuery(sampleProducts[0], "lemon wax"), true);
+  assert.equal(filterProductsBySearchRelevance([sampleProducts[0]], "lemon wax").length, 1);
+});
+
+test("productsForDisplay returns empty list on no_results stage", () => {
+  const displayed = productsForDisplay(
+    { stage: "no_results", selectedProduct: sampleProducts[0], lastProducts: sampleProducts },
+    sampleProducts
+  );
+  assert.equal(displayed.length, 0);
 });

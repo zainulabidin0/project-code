@@ -37,10 +37,12 @@ import {
 } from "@/lib/shopify/checkout-collector";
 import {
   buildProductSuggestions,
+  filterProductsBySearchRelevance,
   parseRequestedQuantity,
   pickDefaultVariant,
   productsForDisplay,
   resolveProductSelection,
+  shouldFilterSearchResults,
 } from "@/lib/shopify/product-selection";
 import type { CartLineItem, ChatSessionContext, SessionMessage, ShopifyProduct } from "@/lib/shopify/types";
 
@@ -117,7 +119,8 @@ function catalogBackedClarification(
 async function runProductSearch(
   storefrontStore: StorefrontStore,
   intent: Awaited<ReturnType<typeof parseIntent>>,
-  userMessage: string
+  userMessage: string,
+  options?: { filterRelevance?: boolean }
 ): Promise<{
   products: ShopifyProduct[];
   usedSearchQuery: string | null;
@@ -186,6 +189,22 @@ async function runProductSearch(
       }
     } else {
       products = [];
+    }
+  }
+
+  if (
+    options?.filterRelevance &&
+    shouldFilterSearchResults(usedSearchQuery) &&
+    products.length > 0
+  ) {
+    const before = products.length;
+    products = filterProductsBySearchRelevance(products, usedSearchQuery ?? userMessage);
+    if (before > products.length) {
+      console.log(LOG_PREFIX, "search relevance filter applied", {
+        query: usedSearchQuery,
+        before,
+        after: products.length,
+      });
     }
   }
 
@@ -324,7 +343,9 @@ export async function POST(req: NextRequest) {
   let clarification = intent.clarification;
 
   if (!checkoutOnlyTurn && intent.intent === "product_search" && !intent.needsClarification) {
-    const searchResult = await runProductSearch(storefrontStore, intent, parsed.data.message);
+    const searchResult = await runProductSearch(storefrontStore, intent, parsed.data.message, {
+      filterRelevance: true,
+    });
     products = searchResult.products;
     usedSearchQuery = searchResult.usedSearchQuery;
     recovered = searchResult.recovered;
