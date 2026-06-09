@@ -204,6 +204,23 @@ function ruleBasedIntent(message: string, opts?: ParseIntentOptions): ParsedInte
     }
   }
 
+  if (context?.stage === "confirming_saved_address") {
+    if (isConfirmYes(trimmed)) {
+      return {
+        intent: "start_checkout",
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+    if (/^(no|nope|change|new|different|update|nahi|nai)\b/i.test(trimmed)) {
+      return {
+        intent: "chitchat",
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
   if (context?.stage === "awaiting_cart_confirm" && context.selectedProduct) {
     if (isConfirmYes(trimmed)) {
       const variantId = context.selectedVariantId ?? pickDefaultVariant(context.selectedProduct);

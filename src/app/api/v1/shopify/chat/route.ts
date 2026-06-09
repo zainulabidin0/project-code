@@ -27,14 +27,24 @@ import {
 import { parseIntent } from "@/lib/shopify/intent-parser";
 import { recoverSearchPlan } from "@/lib/shopify/query-recovery";
 import {
-  beginCheckoutFromExistingCart,
+  beginCheckoutFresh,
+  beginCheckoutWithSavedDraft,
   buildCheckoutReadyMessage,
   buildCheckoutResumeMessage,
   buildEmptyCartCheckoutMessage,
+  buildSavedAddressSummary,
   buildSessionAfterCartAdd,
+  DEFAULT_COUNTRY_CODE,
+  isCheckoutDraftComplete,
+  normalizePhoneE164,
   processCheckoutAnswer,
   toCartCheckoutDetails,
 } from "@/lib/shopify/checkout-collector";
+import {
+  findProfileByDraft,
+  getSavedCustomerProfile,
+  upsertCustomerProfile,
+} from "@/lib/shopify/customer-profile";
 import {
   buildProductSuggestions,
   filterProductsBySearchRelevance,
@@ -44,7 +54,13 @@ import {
   resolveProductSelection,
   shouldFilterSearchResults,
 } from "@/lib/shopify/product-selection";
-import type { CartLineItem, ChatSessionContext, SessionMessage, ShopifyProduct } from "@/lib/shopify/types";
+import type {
+  CartLineItem,
+  ChatSessionContext,
+  CheckoutDraft,
+  SessionMessage,
+  ShopifyProduct,
+} from "@/lib/shopify/types";
 
 export const runtime = "nodejs";
 
@@ -273,7 +289,49 @@ export async function POST(req: NextRequest) {
       parsed.data.message
     );
 
-    if (step.status === "invalid" || step.status === "next") {
+    if (step.status === "invalid") {
+      sessionContext = {
+        ...sessionContext,
+        checkoutDraft: step.draft,
+        checkoutField: step.field,
+        stage: "collecting_checkout",
+      };
+      assistantMessageOverride = step.message;
+    } else if (
+      step.status === "next" &&
+      sessionContext.checkoutField === "email" &&
+      step.draft.email
+    ) {
+      const savedProfile = await getSavedCustomerProfile({
+        storeId: store.id,
+        identifier: step.draft.email,
+      }).catch(() => null);
+
+      if (savedProfile && isCheckoutDraftComplete(savedProfile)) {
+        const mergedDraft: CheckoutDraft = {
+          ...savedProfile,
+          email: step.draft.email,
+          countryCode: savedProfile.countryCode ?? DEFAULT_COUNTRY_CODE,
+        };
+        const summaryMsg = buildSavedAddressSummary(mergedDraft);
+        sessionContext = {
+          ...sessionContext,
+          stage: "confirming_saved_address",
+          checkoutDraft: mergedDraft,
+          checkoutField: undefined,
+        };
+        assistantMessageOverride = `Got it! I found your saved delivery details:\n\n${summaryMsg}\n\nShall I use this address?`;
+        checkoutOnlyTurn = true;
+      } else {
+        sessionContext = {
+          ...sessionContext,
+          checkoutDraft: step.draft,
+          checkoutField: step.field,
+          stage: "collecting_checkout",
+        };
+        assistantMessageOverride = step.message;
+      }
+    } else if (step.status === "next") {
       sessionContext = {
         ...sessionContext,
         checkoutDraft: step.draft,
@@ -299,6 +357,28 @@ export async function POST(req: NextRequest) {
           cartId: session.cartToken,
         };
         assistantMessageOverride = step.message;
+
+        try {
+          const draft = step.draft;
+          const identifier = draft.email
+            ? draft.email.toLowerCase().trim()
+            : draft.phone
+              ? normalizePhoneE164(draft.phone)
+              : null;
+
+          if (identifier) {
+            await upsertCustomerProfile({
+              storeId: store.id,
+              identifier,
+              identifierType: draft.email ? "email" : "phone",
+              draft,
+            });
+          }
+        } catch (profileErr) {
+          console.error(LOG_PREFIX, "upsertCustomerProfile failed", {
+            error: profileErr instanceof Error ? profileErr.message : String(profileErr),
+          });
+        }
       } catch (err) {
         console.error(LOG_PREFIX, "apply checkout details failed", {
           error: err instanceof Error ? err.message : String(err),
@@ -529,18 +609,77 @@ export async function POST(req: NextRequest) {
           cartAction = { cartId: session.cartToken, totalPrice: summary.totalPrice };
         }
         assistantMessageOverride = buildCheckoutResumeMessage(sessionContext.checkoutField);
-      } else {
-        const checkoutStart = beginCheckoutFromExistingCart(summary?.totalPrice ?? undefined);
-        sessionContext = {
-          ...sessionContext,
-          stage: "collecting_checkout",
-          checkoutDraft: checkoutStart.draft,
-          checkoutField: checkoutStart.field,
-        };
-        if (summary) {
-          cartAction = { cartId: session.cartToken, totalPrice: summary.totalPrice };
+      } else if (sessionContext.stage === "confirming_saved_address") {
+        const draft = sessionContext.checkoutDraft;
+        if (draft && session.cartToken) {
+          try {
+            const applied = await applyCheckoutDetailsToCart({
+              store: storefrontStore,
+              cartId: session.cartToken,
+              details: toCartCheckoutDetails(draft),
+            });
+            sessionContext = {
+              ...sessionContext,
+              stage: "checkout_ready",
+              checkoutField: undefined,
+            };
+            cartAction = {
+              checkoutUrl: applied.checkoutUrl,
+              cartId: session.cartToken,
+              totalPrice: summary?.totalPrice,
+            };
+            assistantMessageOverride = buildCheckoutReadyMessage();
+          } catch (err) {
+            console.error(LOG_PREFIX, "apply saved draft to cart failed", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            const freshStart = beginCheckoutFresh(summary?.totalPrice ?? undefined);
+            sessionContext = {
+              ...sessionContext,
+              stage: "collecting_checkout",
+              checkoutDraft: freshStart.draft,
+              checkoutField: freshStart.field,
+            };
+            assistantMessageOverride = freshStart.message;
+          }
         }
-        assistantMessageOverride = checkoutStart.message;
+      } else {
+        const existingDraft = sessionContext.checkoutDraft;
+        const savedProfile = existingDraft
+          ? await findProfileByDraft({
+              storeId: store.id,
+              draft: existingDraft,
+            }).catch(() => null)
+          : null;
+
+        if (savedProfile && isCheckoutDraftComplete(savedProfile)) {
+          const checkoutStart = beginCheckoutWithSavedDraft(
+            savedProfile,
+            summary?.totalPrice ?? undefined
+          );
+          sessionContext = {
+            ...sessionContext,
+            stage: "confirming_saved_address",
+            checkoutDraft: savedProfile,
+            checkoutField: undefined,
+          };
+          if (summary) {
+            cartAction = { cartId: session.cartToken, totalPrice: summary.totalPrice };
+          }
+          assistantMessageOverride = checkoutStart.message;
+        } else {
+          const freshStart = beginCheckoutFresh(summary?.totalPrice ?? undefined);
+          sessionContext = {
+            ...sessionContext,
+            stage: "collecting_checkout",
+            checkoutDraft: freshStart.draft,
+            checkoutField: freshStart.field,
+          };
+          if (summary) {
+            cartAction = { cartId: session.cartToken, totalPrice: summary.totalPrice };
+          }
+          assistantMessageOverride = freshStart.message;
+        }
       }
     }
     products = [];
@@ -580,6 +719,20 @@ export async function POST(req: NextRequest) {
       ...sessionContext,
       stage: sessionContext.lastProducts?.length ? "presenting_options" : "greeting",
     };
+    products = [];
+    includeProductCards = false;
+  } else if (intent.intent === "chitchat" && sessionContext.stage === "confirming_saved_address") {
+    const summary = session.cartToken
+      ? await getCartSummary({ store: storefrontStore, cartId: session.cartToken }).catch(() => null)
+      : null;
+    const freshStart = beginCheckoutFresh(summary?.totalPrice ?? undefined);
+    sessionContext = {
+      ...sessionContext,
+      stage: "collecting_checkout",
+      checkoutDraft: freshStart.draft,
+      checkoutField: freshStart.field,
+    };
+    assistantMessageOverride = freshStart.message;
     products = [];
     includeProductCards = false;
   } else if (intent.intent === "chitchat" && history.length === 0) {
@@ -624,6 +777,7 @@ export async function POST(req: NextRequest) {
     | "variant_selection"
     | "awaiting_quantity"
     | "awaiting_cart_confirm"
+    | "confirming_saved_address"
     | "collecting_checkout"
     | "checkout_ready" = "partial";
 
@@ -631,6 +785,8 @@ export async function POST(req: NextRequest) {
     resultMode = "show_cart";
   } else if (sessionContext.stage === "checkout_ready" && cartAction?.checkoutUrl) {
     resultMode = "checkout_ready";
+  } else if (sessionContext.stage === "confirming_saved_address") {
+    resultMode = "confirming_saved_address";
   } else if (sessionContext.stage === "collecting_checkout") {
     resultMode = "collecting_checkout";
   } else if (sessionContext.stage === "cart_added_pause") {

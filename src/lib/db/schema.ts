@@ -258,6 +258,32 @@ export const shopifyStores = pgTable(
   ]
 );
 
+export const shopCustomerProfiles = pgTable(
+  "shop_customer_profiles",
+  {
+    id: varchar("id", { length: 128 })
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    storeId: varchar("store_id", { length: 128 })
+      .notNull()
+      .references(() => shopifyStores.id, { onDelete: "cascade" }),
+    identifier: text("identifier").notNull(),
+    identifierType: text("identifier_type").notNull(),
+    checkoutDraft: text("checkout_draft").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    uniqueStoreIdentifier: uniqueIndex("shop_customer_profiles_store_identifier_idx").on(
+      t.storeId,
+      t.identifier
+    ),
+  })
+);
+
 export const shopChatSessions = pgTable(
   "shop_chat_sessions",
   {

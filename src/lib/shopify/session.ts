@@ -30,6 +30,7 @@ export function parseSessionContext(raw: string | null | undefined): ChatSession
       stage === "awaiting_cart_confirm" ||
       stage === "awaiting_confirm" ||
       stage === "cart_added_pause" ||
+      stage === "confirming_saved_address" ||
       stage === "collecting_checkout" ||
       stage === "checkout_ready" ||
       stage === "completed"

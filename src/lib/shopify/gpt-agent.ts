@@ -45,6 +45,7 @@ function buildSystemPrompt(
       | "variant_selection"
       | "awaiting_quantity"
       | "awaiting_cart_confirm"
+      | "confirming_saved_address"
       | "collecting_checkout"
       | "checkout_ready";
     clarificationQuestion?: string;
@@ -118,6 +119,10 @@ Rules:
     rules +=
       "\n- The item was successfully added to cart. Confirm briefly and ask: 'Would you like to checkout?' Do NOT start asking for delivery details yet.";
   }
+  if (opts.resultMode === "confirming_saved_address") {
+    rules +=
+      "\n- You are showing the shopper their previously saved delivery address and asking if they want to use it. Be warm and brief. Say 'Shall I use this address?' or similar.";
+  }
   if (opts.resultMode === "collecting_checkout") {
     rules +=
       "\n- You are collecting checkout delivery details one question at a time. Ask ONLY the next required question. Do not share a checkout link yet.";
@@ -172,6 +177,7 @@ export async function runAgent(params: {
     | "variant_selection"
     | "awaiting_quantity"
     | "awaiting_cart_confirm"
+    | "confirming_saved_address"
     | "collecting_checkout"
     | "checkout_ready";
   clarification?: { question: string; suggestions: string[] };
@@ -300,6 +306,15 @@ export async function runAgent(params: {
       JSON.stringify({
         intent: "add_to_cart",
         message: "Done! Added to your cart. Would you like to checkout?",
+      })
+    );
+  }
+
+  if (params.resultMode === "confirming_saved_address" && !getGroqKey()) {
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "start_checkout",
+        message: "I have your saved address. Shall I use it for this order?",
       })
     );
   }

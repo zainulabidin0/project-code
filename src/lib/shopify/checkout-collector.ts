@@ -473,3 +473,54 @@ export function buildSelectableDeliveryAddress(details: DeliveryAddressPayload) 
     },
   };
 }
+
+export function buildSavedAddressSummary(draft: CheckoutDraft): string {
+  const lines: string[] = [];
+  if (draft.fullName) lines.push(`Name: ${draft.fullName}`);
+  if (draft.email) lines.push(`Email: ${draft.email}`);
+  if (draft.phone) lines.push(`Phone: ${draft.phone}`);
+  if (draft.address1) lines.push(`Address: ${draft.address1}${draft.address2 ? `, ${draft.address2}` : ""}`);
+  if (draft.city) lines.push(`City: ${draft.city}`);
+  if (draft.province) lines.push(`Province: ${draft.province}`);
+  if (draft.zip) lines.push(`Postal code: ${draft.zip}`);
+  return lines.join("\n");
+}
+
+export function buildUseSavedAddressPrompt(draft: CheckoutDraft, cartTotal?: string): string {
+  const summary = buildSavedAddressSummary(draft);
+  const totalLine = cartTotal ? `\nCart total: ${cartTotal}` : "";
+  return `I have your delivery details saved from before:${totalLine}\n\n${summary}\n\nShall I use this address? Reply yes to confirm or no to enter a new one.`;
+}
+
+export function beginCheckoutWithSavedDraft(
+  savedDraft: CheckoutDraft,
+  cartTotal?: string
+): {
+  draft: CheckoutDraft;
+  field: CheckoutField | null;
+  message: string;
+  usingSavedDraft: true;
+} {
+  return {
+    draft: savedDraft,
+    field: null,
+    message: buildUseSavedAddressPrompt(savedDraft, cartTotal),
+    usingSavedDraft: true,
+  };
+}
+
+export function beginCheckoutFresh(cartTotal?: string): {
+  draft: CheckoutDraft;
+  field: CheckoutField;
+  message: string;
+  usingSavedDraft: false;
+} {
+  const draft = createInitialCheckoutDraft();
+  const field = getNextCheckoutField(draft)!;
+  return {
+    draft,
+    field,
+    message: buildCheckoutStartMessage(cartTotal),
+    usingSavedDraft: false,
+  };
+}

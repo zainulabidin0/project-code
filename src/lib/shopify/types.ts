@@ -31,6 +31,7 @@ export type ConversationStage =
   | "awaiting_cart_confirm"
   | "awaiting_confirm"
   | "cart_added_pause"
+  | "confirming_saved_address"
   | "collecting_checkout"
   | "checkout_ready"
   | "completed";
