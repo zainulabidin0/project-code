@@ -36,6 +36,7 @@ import {
   buildSessionAfterCartAdd,
   buildUseSavedAddressPrompt,
   enrichCheckoutUrlWithDraft,
+  getCheckoutQuestion,
   DEFAULT_COUNTRY_CODE,
   isCheckoutDraftComplete,
   isShowSavedDetailsRequest,
@@ -43,6 +44,7 @@ import {
   processCheckoutAnswer,
   toCartCheckoutDetails,
 } from "@/lib/shopify/checkout-collector";
+import { normalizeFullNameInput } from "@/lib/shopify/name-normalizer";
 import {
   findProfileByDraft,
   getSavedCustomerProfile,
@@ -286,13 +288,30 @@ export async function POST(req: NextRequest) {
     session.cartToken
   ) {
     checkoutOnlyTurn = true;
-    const step = processCheckoutAnswer(
-      sessionContext.checkoutDraft,
-      sessionContext.checkoutField,
-      parsed.data.message
-    );
 
-    if (step.status === "invalid") {
+    let checkoutAnswerMessage = parsed.data.message;
+    let skipCheckoutStep = false;
+    if (sessionContext.checkoutField === "fullName") {
+      const nameNorm = await normalizeFullNameInput(parsed.data.message);
+      if (!nameNorm.ok) {
+        assistantMessageOverride = `${nameNorm.reason}\n\n${getCheckoutQuestion("fullName")}`;
+        skipCheckoutStep = true;
+      } else {
+        checkoutAnswerMessage = nameNorm.fullName;
+      }
+    }
+
+    const step = skipCheckoutStep
+      ? null
+      : processCheckoutAnswer(
+          sessionContext.checkoutDraft,
+          sessionContext.checkoutField,
+          checkoutAnswerMessage
+        );
+
+    if (!step) {
+      // fullName normalization failed — stay on the same checkout field
+    } else if (step.status === "invalid") {
       sessionContext = {
         ...sessionContext,
         checkoutDraft: step.draft,
