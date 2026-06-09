@@ -51,6 +51,8 @@
   var panelOpen = false;
   var mediaRecorder = null;
   var isRecording = false;
+  var voiceReplyMode = false;
+  var currentSpeechAudio = null;
 
   function injectResponsiveCss() {
     if (document.getElementById("af-responsive-css")) return;
@@ -437,6 +439,54 @@
     }
     btn.addEventListener("click", toggle);
 
+    function stopSpeech() {
+      if (currentSpeechAudio) {
+        currentSpeechAudio.pause();
+        currentSpeechAudio.src = "";
+        currentSpeechAudio = null;
+      }
+    }
+
+    function playBase64Wav(b64) {
+      return new Promise(function (resolve, reject) {
+        var audio = new Audio("data:audio/wav;base64," + b64);
+        currentSpeechAudio = audio;
+        audio.onended = function () {
+          if (currentSpeechAudio === audio) currentSpeechAudio = null;
+          resolve();
+        };
+        audio.onerror = function () {
+          if (currentSpeechAudio === audio) currentSpeechAudio = null;
+          reject(new Error("Audio playback failed"));
+        };
+        audio.play().catch(reject);
+      });
+    }
+
+    async function playGroqSpeech(text) {
+      if (!text || !text.trim()) return;
+      stopSpeech();
+      try {
+        var speakRes = await fetch(API + "/speak", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shop-Domain": shop,
+          },
+          body: JSON.stringify({ text: text }),
+        });
+        var speakJson = await speakRes.json();
+        if (!speakJson.success || !speakJson.data || !speakJson.data.chunks || !speakJson.data.chunks.length) {
+          return;
+        }
+        for (var ci = 0; ci < speakJson.data.chunks.length; ci++) {
+          await playBase64Wav(speakJson.data.chunks[ci]);
+        }
+      } catch (speakErr) {
+        return;
+      }
+    }
+
     async function onSend(prefilledText) {
       var text = (prefilledText || input.value || "").trim();
       if (!text) return;
@@ -485,8 +535,13 @@
           list.appendChild(a);
           list.scrollTop = list.scrollHeight;
         }
+        if (voiceReplyMode) {
+          voiceReplyMode = false;
+          await playGroqSpeech(msg);
+        }
       } catch (e) {
         typing.remove();
+        voiceReplyMode = false;
         appendMsg(list, "assistant", "Connection error. Try again.");
       }
     }
@@ -533,6 +588,7 @@
               list.removeChild(list.lastChild);
               if (j.success && j.data && j.data.transcript) {
                 input.value = j.data.transcript;
+                voiceReplyMode = true;
                 await onSend();
               } else {
                 appendMsg(list, "assistant", "Could not transcribe audio.");
