@@ -1,0 +1,772 @@
+{
+  "carrier": "tcs",
+  "scrapedAt": "2026-06-09",
+  "sources": [
+    "https://tcsexpress.com.pk/tcs-courier-charges/",
+    "https://tcsexpress.com.pk/tcs-rate-calculator/"
+  ],
+  "cities": [
+    {
+      "name": "Karachi",
+      "aliases": [
+        "khi",
+        "karachi city",
+        "karcahi"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Lahore",
+      "aliases": [
+        "lhe",
+        "lahor"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Islamabad",
+      "aliases": [
+        "isb",
+        "islam abad",
+        "capital"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Rawalpindi",
+      "aliases": [
+        "rwp",
+        "pindi",
+        "rawal pindi"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Faisalabad",
+      "aliases": [
+        "fsd",
+        "lyallpur"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Multan",
+      "aliases": [
+        "mux",
+        "mul tan"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Peshawar",
+      "aliases": [
+        "pew",
+        "peshawar city"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Quetta",
+      "aliases": [
+        "uet"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Hyderabad",
+      "aliases": [
+        "hdd",
+        "hyderabad sindh"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Gujranwala",
+      "aliases": [
+        "grw"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Sialkot",
+      "aliases": [
+        "skt"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Gujrat",
+      "aliases": [
+        "gujrat city"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Jhelum",
+      "aliases": [
+        "jhelum city"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sheikhupura",
+      "aliases": [
+        "skp",
+        "sheikupura"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Okara",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sahiwal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kasur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Narowal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Hafizabad",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mandi Bahauddin",
+      "aliases": [
+        "mandi baha ud din",
+        "mbd"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Jhang",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Khanewal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Dera Ghazi Khan",
+      "aliases": [
+        "dg khan",
+        "dgk"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Pakpattan",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Attock",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Chakwal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bhakkar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mianwali",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Layyah",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Toba Tek Singh",
+      "aliases": [
+        "tts"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Gojra",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Burewala",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Chiniot",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Wah Cantonment",
+      "aliases": [
+        "wah",
+        "wah cantt"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Taxila",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Muridke",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kamoke",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Vehari",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bahawalnagar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Rahim Yar Khan",
+      "aliases": [
+        "ryk",
+        "rahimyarkhan"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sargodha",
+      "aliases": [
+        "sgd"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bahawalpur",
+      "aliases": [
+        "bwp"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sukkur",
+      "aliases": [
+        "skr"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Larkana",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Nawabshah",
+      "aliases": [
+        "shaheed benazirabad",
+        "benazirabad"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mirpur Khas",
+      "aliases": [
+        "mirpurkhas"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Jacobabad",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Khairpur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Dadu",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Thatta",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Badin",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sanghar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Shikarpur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Umerkot",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Ghotki",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Naushahro Feroze",
+      "aliases": [
+        "naushahro feroze"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mardan",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Abbottabad",
+      "aliases": [
+        "abbotabad"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kohat",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Swabi",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bannu",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mansehra",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Haripur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Nowshera",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Dera Ismail Khan",
+      "aliases": [
+        "d i khan",
+        "dikhan"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Charsadda",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mingora",
+      "aliases": [
+        "swat",
+        "swat city"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Timergara",
+      "aliases": [
+        "dir"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Hangu",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Tank",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Turbat",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Khuzdar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Hub",
+      "aliases": [
+        "hub chowki"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Chaman",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Loralai",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sibi",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Zhob",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mirpur",
+      "aliases": [
+        "mirpur ajk"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Muzaffarabad",
+      "aliases": [
+        "mzd"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Rawalakot",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kotli",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Gwadar",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Gilgit",
+      "aliases": [
+        "gilgit baltistan",
+        "gb"
+      ],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Skardu",
+      "aliases": [
+        "skardu city"
+      ],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Hunza",
+      "aliases": [
+        "hunza valley",
+        "karimabad"
+      ],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Chitral",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Murree",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Astore",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Ghizer",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Ghanche",
+      "aliases": [
+        "khaplu"
+      ],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Nagar",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Parachinar",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    },
+    {
+      "name": "Kalat",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    }
+  ],
+  "weightSlabs": [
+    {
+      "maxKg": 0.5,
+      "zoneRates": {
+        "within_city": 190,
+        "metro_to_metro": 248,
+        "metro_to_tier2": 275,
+        "metro_to_remote": 450,
+        "tier2_to_metro": 275,
+        "tier2_to_tier2": 300,
+        "tier2_to_remote": 480,
+        "remote_to_metro": 450,
+        "remote_to_tier2": 480,
+        "remote_to_remote": 520
+      }
+    },
+    {
+      "maxKg": 1,
+      "zoneRates": {
+        "within_city": 220,
+        "metro_to_metro": 288,
+        "metro_to_tier2": 315,
+        "metro_to_remote": 550,
+        "tier2_to_metro": 315,
+        "tier2_to_tier2": 340,
+        "tier2_to_remote": 580,
+        "remote_to_metro": 550,
+        "remote_to_tier2": 580,
+        "remote_to_remote": 620
+      }
+    },
+    {
+      "maxKg": 2,
+      "zoneRates": {
+        "within_city": 300,
+        "metro_to_metro": 366,
+        "metro_to_tier2": 400,
+        "metro_to_remote": 750,
+        "tier2_to_metro": 400,
+        "tier2_to_tier2": 430,
+        "tier2_to_remote": 780,
+        "remote_to_metro": 750,
+        "remote_to_tier2": 780,
+        "remote_to_remote": 820
+      }
+    },
+    {
+      "maxKg": 5,
+      "zoneRates": {
+        "within_city": 405,
+        "metro_to_metro": 575,
+        "metro_to_tier2": 620,
+        "metro_to_remote": 1350,
+        "tier2_to_metro": 620,
+        "tier2_to_tier2": 660,
+        "tier2_to_remote": 1400,
+        "remote_to_metro": 1350,
+        "remote_to_tier2": 1400,
+        "remote_to_remote": 1500
+      }
+    },
+    {
+      "maxKg": 10,
+      "zoneRates": {
+        "within_city": 925,
+        "metro_to_metro": 1045,
+        "metro_to_tier2": 1100,
+        "metro_to_remote": 2100,
+        "tier2_to_metro": 1100,
+        "tier2_to_tier2": 1150,
+        "tier2_to_remote": 2150,
+        "remote_to_metro": 2100,
+        "remote_to_tier2": 2150,
+        "remote_to_remote": 2250
+      }
+    }
+  ],
+  "addOnPerHalfKg": {
+    "within_city": 40,
+    "metro_to_metro": 55,
+    "metro_to_tier2": 60,
+    "metro_to_remote": 90,
+    "tier2_to_metro": 60,
+    "tier2_to_tier2": 65,
+    "tier2_to_remote": 95,
+    "remote_to_metro": 90,
+    "remote_to_tier2": 95,
+    "remote_to_remote": 100
+  },
+  "cod": {
+    "supported": true,
+    "slabs": [
+      {
+        "maxAmount": 5000,
+        "fee": 75
+      },
+      {
+        "maxAmount": 10000,
+        "fee": 125
+      },
+      {
+        "maxAmount": 20000,
+        "fee": 200
+      },
+      {
+        "maxAmount": 50000,
+        "fee": 325
+      }
+    ]
+  },
+  "remoteCoverageNotes": "TCS serves remote northern areas including Gilgit, Skardu, and Hunza with premium remote zone rates."
+}

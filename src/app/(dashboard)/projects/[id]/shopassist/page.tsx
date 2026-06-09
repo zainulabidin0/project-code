@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { ProjectSubNav } from "@/components/ProjectSubNav";
 
 type ShopAssistPayload = {
   store: {
@@ -116,7 +117,8 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
         ← Back to project
       </Link>
       <h1 className="mt-4 font-display text-3xl font-semibold text-white">ShopAssist</h1>
-      <p className="mt-2 text-sm text-zinc-500">Connect a Shopify store and configure your assistant widget.</p>
+      <ProjectSubNav projectId={id} active="shopassist" />
+      <p className="mt-4 text-sm text-zinc-500">Connect a Shopify store and configure your assistant widget.</p>
 
       {needsReauth && (
         <div className="mt-6 rounded-lg border border-red-800 bg-red-950/40 p-4">

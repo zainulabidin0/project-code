@@ -1,0 +1,672 @@
+{
+  "carrier": "leopards",
+  "scrapedAt": "2026-06-09",
+  "sources": [
+    "https://ecom.leopardscourier.com/business/express-overnight",
+    "http://ecomuae.leopardscourier.com/pages/content/yellow-box.html"
+  ],
+  "cities": [
+    {
+      "name": "Karachi",
+      "aliases": [
+        "khi",
+        "karachi city",
+        "karcahi"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Lahore",
+      "aliases": [
+        "lhe",
+        "lahor"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Islamabad",
+      "aliases": [
+        "isb",
+        "islam abad",
+        "capital"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Rawalpindi",
+      "aliases": [
+        "rwp",
+        "pindi",
+        "rawal pindi"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Faisalabad",
+      "aliases": [
+        "fsd",
+        "lyallpur"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Multan",
+      "aliases": [
+        "mux",
+        "mul tan"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Peshawar",
+      "aliases": [
+        "pew",
+        "peshawar city"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Quetta",
+      "aliases": [
+        "uet"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Hyderabad",
+      "aliases": [
+        "hdd",
+        "hyderabad sindh"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Gujranwala",
+      "aliases": [
+        "grw"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Sialkot",
+      "aliases": [
+        "skt"
+      ],
+      "zone": "metro",
+      "codSupported": true
+    },
+    {
+      "name": "Gujrat",
+      "aliases": [
+        "gujrat city"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Jhelum",
+      "aliases": [
+        "jhelum city"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sheikhupura",
+      "aliases": [
+        "skp",
+        "sheikupura"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Okara",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sahiwal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kasur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Narowal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Hafizabad",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mandi Bahauddin",
+      "aliases": [
+        "mandi baha ud din",
+        "mbd"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Jhang",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Khanewal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Dera Ghazi Khan",
+      "aliases": [
+        "dg khan",
+        "dgk"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Pakpattan",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Attock",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Chakwal",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bhakkar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mianwali",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Layyah",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Toba Tek Singh",
+      "aliases": [
+        "tts"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Gojra",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Burewala",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Chiniot",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Wah Cantonment",
+      "aliases": [
+        "wah",
+        "wah cantt"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Taxila",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Muridke",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kamoke",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Vehari",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bahawalnagar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Rahim Yar Khan",
+      "aliases": [
+        "ryk",
+        "rahimyarkhan"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sargodha",
+      "aliases": [
+        "sgd"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bahawalpur",
+      "aliases": [
+        "bwp"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sukkur",
+      "aliases": [
+        "skr"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Larkana",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Nawabshah",
+      "aliases": [
+        "shaheed benazirabad",
+        "benazirabad"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mirpur Khas",
+      "aliases": [
+        "mirpurkhas"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Jacobabad",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Khairpur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Dadu",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Thatta",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Badin",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sanghar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Shikarpur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Umerkot",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Ghotki",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Naushahro Feroze",
+      "aliases": [
+        "naushahro feroze"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mardan",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Abbottabad",
+      "aliases": [
+        "abbotabad"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kohat",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Swabi",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Bannu",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mansehra",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Haripur",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Nowshera",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Dera Ismail Khan",
+      "aliases": [
+        "d i khan",
+        "dikhan"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Charsadda",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mingora",
+      "aliases": [
+        "swat",
+        "swat city"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Timergara",
+      "aliases": [
+        "dir"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Hangu",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Tank",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Turbat",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Khuzdar",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Hub",
+      "aliases": [
+        "hub chowki"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Chaman",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Loralai",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Sibi",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Zhob",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Mirpur",
+      "aliases": [
+        "mirpur ajk"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Muzaffarabad",
+      "aliases": [
+        "mzd"
+      ],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Rawalakot",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kotli",
+      "aliases": [],
+      "zone": "tier2",
+      "codSupported": true
+    },
+    {
+      "name": "Kalat",
+      "aliases": [],
+      "zone": "remote",
+      "codSupported": true
+    }
+  ],
+  "weightSlabs": [
+    {
+      "maxKg": 0.5,
+      "zoneRates": {
+        "within_city": 120,
+        "metro_to_metro": 155,
+        "metro_to_tier2": 170,
+        "metro_to_tier2_same": 140,
+        "tier2_to_tier2": 170,
+        "tier2_to_metro": 170
+      }
+    },
+    {
+      "maxKg": 1,
+      "zoneRates": {
+        "within_city": 140,
+        "metro_to_metro": 170,
+        "metro_to_tier2": 190,
+        "metro_to_tier2_same": 140,
+        "tier2_to_tier2": 190,
+        "tier2_to_metro": 190
+      }
+    },
+    {
+      "maxKg": 2,
+      "zoneRates": {
+        "within_city": 220,
+        "metro_to_metro": 330,
+        "metro_to_tier2": 350,
+        "metro_to_tier2_same": 260,
+        "tier2_to_tier2": 350,
+        "tier2_to_metro": 350
+      }
+    },
+    {
+      "maxKg": 5,
+      "zoneRates": {
+        "within_city": 480,
+        "metro_to_metro": 710,
+        "metro_to_tier2": 750,
+        "metro_to_tier2_same": 540,
+        "tier2_to_tier2": 750,
+        "tier2_to_metro": 750
+      }
+    },
+    {
+      "maxKg": 10,
+      "zoneRates": {
+        "within_city": 900,
+        "metro_to_metro": 1260,
+        "metro_to_tier2": 1300,
+        "metro_to_tier2_same": 760,
+        "tier2_to_tier2": 1300,
+        "tier2_to_metro": 1300
+      }
+    }
+  ],
+  "addOnPerHalfKg": {
+    "within_city": 70,
+    "metro_to_metro": 90,
+    "metro_to_tier2": 90,
+    "metro_to_tier2_same": 80,
+    "tier2_to_tier2": 90,
+    "tier2_to_metro": 90
+  },
+  "cod": {
+    "supported": true,
+    "slabs": [
+      {
+        "maxAmount": 5000,
+        "fee": 60
+      },
+      {
+        "maxAmount": 10000,
+        "fee": 100
+      },
+      {
+        "maxAmount": 20000,
+        "fee": 175
+      },
+      {
+        "maxAmount": 50000,
+        "fee": 300
+      }
+    ]
+  },
+  "remoteCoverageNotes": "Leopards overnight network covers major and tier-2 cities; remote northern destinations are not in scraped coverage."
+}

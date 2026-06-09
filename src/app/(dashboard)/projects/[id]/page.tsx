@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { ProjectSubNav } from "@/components/ProjectSubNav";
 
 type KeyRow = {
   id: string;
@@ -160,26 +161,7 @@ export default function ProjectDetailPage({
       <h1 className="mt-4 font-display text-3xl font-semibold text-white">
         {projectName || "Project"}
       </h1>
-      <p className="mt-2 flex flex-wrap gap-4 text-sm">
-        <Link
-          href={`/projects/${id}/reviews`}
-          className="text-emerald-500 hover:underline"
-        >
-          Reviews & sentiment
-        </Link>
-        <Link
-          href={`/projects/${id}/reviews/settings`}
-          className="text-emerald-500 hover:underline"
-        >
-          Public reviews page
-        </Link>
-        <Link
-          href={`/projects/${id}/shopassist`}
-          className="text-emerald-500 hover:underline"
-        >
-          ShopAssist
-        </Link>
-      </p>
+      <ProjectSubNav projectId={id} active="overview" />
 
       <section className="mt-8">
         <h2 className="text-lg font-medium text-white">API keys</h2>
