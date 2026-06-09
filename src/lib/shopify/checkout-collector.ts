@@ -291,6 +291,16 @@ export function beginCheckoutFromExistingCart(cartTotal?: string): {
   };
 }
 
+export function buildCartAddedPauseMessage(
+  productName: string,
+  quantity: number,
+  cartTotal?: string
+): string {
+  const totalLine = cartTotal ? `\nCart total: ${cartTotal}` : "";
+  const qty = quantity > 1 ? `${quantity}× ` : "";
+  return `Done! ${qty}${productName} has been added to your cart.${totalLine}\n\nWould you like to checkout?`;
+}
+
 export function buildSessionAfterCartAdd(params: {
   sessionContext: {
     selectedProduct?: import("@/lib/shopify/types").ShopifyProduct;
@@ -303,21 +313,25 @@ export function buildSessionAfterCartAdd(params: {
   variantId: string;
   quantity: number;
 }) {
-  const checkoutStart = beginCheckoutCollection(params.cart.totalPrice ?? undefined);
+  const productName = params.sessionContext.selectedProduct?.title ?? "Your item";
+  const introMessage = buildCartAddedPauseMessage(
+    productName,
+    params.quantity,
+    params.cart.totalPrice ?? undefined
+  );
+
   return {
     sessionContext: {
       ...params.sessionContext,
-      stage: "collecting_checkout" as const,
+      stage: "cart_added_pause" as const,
       selectedVariantId: params.variantId,
       selectedQuantity: params.quantity,
-      checkoutDraft: checkoutStart.draft,
-      checkoutField: checkoutStart.field,
     },
     cartAction: {
       cartId: params.cart.cartId,
       totalPrice: params.cart.totalPrice,
     },
-    introMessage: checkoutStart.message,
+    introMessage,
   };
 }
 

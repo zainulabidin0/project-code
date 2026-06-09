@@ -96,7 +96,13 @@ Rules:
 - If failure was likely malformed query, return status=rewritten with a safer query.
 - For "new/latest/recent", prefer sortKey=CREATED_AT and reverse=true.
 - If uncertain, return status=clarification with 2-4 suggestions.
-- Never include markdown.`,
+- Never include markdown.
+
+CRITICAL RULES:
+- Do NOT broaden to related categories (e.g. if query was "wax", do NOT try "polish" or "cleaner").
+- If the query itself is valid English but returned no results, return status=clarification immediately.
+- Only rewrite if the query had a syntax/parse error (bad characters, too complex for Shopify query syntax).
+- A rewrite must use a SHORTER, SIMPLER version of the same query — never a different product type.`,
       },
       {
         role: "user",

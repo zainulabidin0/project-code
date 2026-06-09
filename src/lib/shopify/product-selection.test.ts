@@ -108,8 +108,9 @@ test("isDirectCartAddRequest detects explicit add commands", () => {
   assert.equal(isDirectCartAddRequest("mujhe 2 piece buy krne hn"), true);
   assert.equal(isDirectCartAddRequest("I want to browse"), false);
 });
-test("isBrowseAlternativesRequest detects agreement to see other products", () => {
-  assert.equal(isBrowseAlternativesRequest("sure"), true);
+test("isBrowseAlternativesRequest detects explicit browse phrases only", () => {
+  assert.equal(isBrowseAlternativesRequest("sure"), false);
+  assert.equal(isBrowseAlternativesRequest("yes"), false);
   assert.equal(isBrowseAlternativesRequest("show me what else you have"), true);
   assert.equal(isBrowseAlternativesRequest("candle wax"), false);
 });

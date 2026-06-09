@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { shopifyStores } from "@/lib/db/schema";
 import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
-import type { SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
+import type { CartLineItem, CartSummaryWithLines, SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
 
 /** Storefront API version (tokenless requires 2024-04+). */
 const STOREFRONT_API_VERSION = "2025-01";
@@ -136,6 +136,31 @@ query CartCheckoutUrl($id: ID!) {
     checkoutUrl
     cost {
       totalAmount { amount currencyCode }
+    }
+  }
+}
+`;
+
+const CART_WITH_LINES_QUERY = `
+query CartWithLines($id: ID!) {
+  cart(id: $id) {
+    checkoutUrl
+    cost {
+      totalAmount { amount currencyCode }
+    }
+    lines(first: 20) {
+      edges {
+        node {
+          quantity
+          merchandise {
+            ... on ProductVariant {
+              title
+              price { amount currencyCode }
+              product { title }
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -552,5 +577,52 @@ export async function getCartSummary(params: {
   return {
     checkoutUrl: data.cart.checkoutUrl,
     totalPrice: formatTotal(data.cart.cost),
+  };
+}
+
+export async function getCartWithLines(params: {
+  store: StorefrontStore;
+  cartId: string;
+}): Promise<CartSummaryWithLines | null> {
+  const data = await storefrontFetch<{
+    cart: {
+      checkoutUrl: string;
+      cost: { totalAmount: { amount: string; currencyCode: string } };
+      lines: {
+        edges: Array<{
+          node: {
+            quantity: number;
+            merchandise: {
+              title?: string;
+              price?: { amount: string; currencyCode: string };
+              product?: { title: string };
+            };
+          };
+        }>;
+      };
+    } | null;
+  }>(params.store, CART_WITH_LINES_QUERY, { id: params.cartId });
+
+  if (!data.cart?.checkoutUrl) return null;
+
+  const lines: CartLineItem[] = [];
+  for (const { node } of data.cart.lines.edges) {
+    const merchandise = node.merchandise;
+    if (!merchandise?.title || !merchandise.price?.amount || !merchandise.product?.title) {
+      continue;
+    }
+    lines.push({
+      title: merchandise.product.title,
+      variantTitle: merchandise.title,
+      quantity: node.quantity,
+      price: merchandise.price.amount,
+      currency: merchandise.price.currencyCode,
+    });
+  }
+
+  return {
+    checkoutUrl: data.cart.checkoutUrl,
+    totalPrice: formatTotal(data.cart.cost),
+    lines,
   };
 }

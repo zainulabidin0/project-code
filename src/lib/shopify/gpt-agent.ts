@@ -1,4 +1,10 @@
-import type { ChatSessionContext, ConversationStage, SessionMessage, ShopifyProduct } from "@/lib/shopify/types";
+import type {
+  CartLineItem,
+  ChatSessionContext,
+  ConversationStage,
+  SessionMessage,
+  ShopifyProduct,
+} from "@/lib/shopify/types";
 import { parseAgentResponse } from "@/lib/shopify/intent-parser";
 import { getGroqKey, groqChatCompletion, GROQ_CHAT_MODEL } from "@/lib/groq/client";
 import {
@@ -25,7 +31,22 @@ function buildSystemPrompt(
   opts: {
     routingIntent?: string;
     cartHint?: string;
-    resultMode?: "success" | "clarification" | "partial" | "no_results" | "multi_results" | "greeting" | "confirm_offer" | "cart_added" | "collecting_checkout" | "checkout_ready";
+    resultMode?:
+      | "success"
+      | "clarification"
+      | "partial"
+      | "no_results"
+      | "multi_results"
+      | "greeting"
+      | "confirm_offer"
+      | "cart_added"
+      | "cart_added_pause"
+      | "show_cart"
+      | "variant_selection"
+      | "awaiting_quantity"
+      | "awaiting_cart_confirm"
+      | "collecting_checkout"
+      | "checkout_ready";
     clarificationQuestion?: string;
     suggestions?: string[];
     searchedQuery?: string | null;
@@ -78,6 +99,25 @@ Rules:
     rules +=
       "\n- The item was successfully added to cart. Confirm this warmly. Do NOT share a checkout link — delivery details will be collected next.";
   }
+  if (opts.resultMode === "show_cart") {
+    rules +=
+      "\n- You are showing the shopper their current cart contents. List each item with quantity and price clearly. End by asking if they want to checkout or continue shopping.";
+  }
+  if (opts.resultMode === "variant_selection" && opts.selectedProduct) {
+    rules += `\n- The shopper picked ${opts.selectedProduct.title}. List the available sizes/options and ask which one they want. Be brief.`;
+  }
+  if (opts.resultMode === "awaiting_quantity") {
+    rules += "\n- The shopper has chosen their product and variant. Ask simply: 'How many would you like?'";
+  }
+  if (opts.resultMode === "awaiting_cart_confirm" && opts.selectedProduct) {
+    const qty = opts.selectedQuantity ?? 1;
+    const item = opts.selectedProduct.title;
+    rules += `\n- Confirm the order: ${qty}× ${item}. Show the per-unit price and total. Ask: 'Shall I add this to your cart?'`;
+  }
+  if (opts.resultMode === "cart_added_pause") {
+    rules +=
+      "\n- The item was successfully added to cart. Confirm briefly and ask: 'Would you like to checkout?' Do NOT start asking for delivery details yet.";
+  }
   if (opts.resultMode === "collecting_checkout") {
     rules +=
       "\n- You are collecting checkout delivery details one question at a time. Ask ONLY the next required question. Do not share a checkout link yet.";
@@ -118,13 +158,29 @@ export async function runAgent(params: {
   products: ShopifyProduct[];
   cartAction?: { checkoutUrl?: string; totalPrice?: string | null; cartId?: string } | null;
   routingIntent?: string;
-  resultMode?: "success" | "clarification" | "partial" | "no_results" | "multi_results" | "greeting" | "confirm_offer" | "cart_added" | "collecting_checkout" | "checkout_ready";
+  resultMode?:
+    | "success"
+    | "clarification"
+    | "partial"
+    | "no_results"
+    | "multi_results"
+    | "greeting"
+    | "confirm_offer"
+    | "cart_added"
+    | "cart_added_pause"
+    | "show_cart"
+    | "variant_selection"
+    | "awaiting_quantity"
+    | "awaiting_cart_confirm"
+    | "collecting_checkout"
+    | "checkout_ready";
   clarification?: { question: string; suggestions: string[] };
   searchedQuery?: string | null;
   conversationStage?: ConversationStage;
   selectedProduct?: ShopifyProduct;
   sessionContext?: ChatSessionContext;
   selectedQuantity?: number;
+  cartLines?: CartLineItem[];
 }) {
   if (
     params.resultMode === "no_results" ||
@@ -189,6 +245,65 @@ export async function runAgent(params: {
     );
   }
 
+  if (params.resultMode === "show_cart" && !getGroqKey()) {
+    const lines = params.cartLines ?? [];
+    const list = lines.length
+      ? lines
+          .map(
+            (l) =>
+              `${l.quantity}× ${l.title}${l.variantTitle !== "Default Title" ? ` (${l.variantTitle})` : ""} — ${l.currency} ${l.price}`
+          )
+          .join("\n")
+      : "Your cart is empty.";
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "show_cart",
+        message: `Here's your cart:\n${list}${params.cartAction?.totalPrice ? `\n\nTotal: ${params.cartAction.totalPrice}` : ""}`,
+      })
+    );
+  }
+
+  if (params.resultMode === "variant_selection" && params.selectedProduct && !getGroqKey()) {
+    const options = params.selectedProduct.variants
+      .filter((v) => v.available)
+      .map((v) => v.title)
+      .join(", ");
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "select_product",
+        message: `${params.selectedProduct.title} is available in: ${options}. Which would you like?`,
+      })
+    );
+  }
+
+  if (params.resultMode === "awaiting_quantity" && !getGroqKey()) {
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "select_product",
+        message: "How many would you like?",
+      })
+    );
+  }
+
+  if (params.resultMode === "awaiting_cart_confirm" && params.selectedProduct && !getGroqKey()) {
+    const qty = params.selectedQuantity ?? 1;
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "confirm_add_to_cart",
+        message: `${qty}× ${params.selectedProduct.title} — shall I add this to your cart?`,
+      })
+    );
+  }
+
+  if (params.resultMode === "cart_added_pause" && !getGroqKey()) {
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "add_to_cart",
+        message: "Done! Added to your cart. Would you like to checkout?",
+      })
+    );
+  }
+
   if (!getGroqKey()) {
     if (params.products.length > 1) {
       const list = params.products.map(formatProductLine).join(", ");
@@ -247,7 +362,11 @@ export async function runAgent(params: {
     ...params.history.map((m) => ({ role: m.role, content: m.content })),
     {
       role: "user",
-      content: `${params.userMessage}\n\nProduct context:\n${JSON.stringify(params.products).slice(0, 3000)}`,
+      content: `${params.userMessage}\n\nProduct context:\n${JSON.stringify(params.products).slice(0, 3000)}${
+        params.cartLines?.length
+          ? `\n\nCart lines:\n${JSON.stringify(params.cartLines).slice(0, 2000)}`
+          : ""
+      }`,
     },
   ];
 
@@ -306,6 +425,15 @@ export async function runAgent(params: {
       JSON.stringify({
         intent: "add_to_cart",
         message: `Done! I've added ${qty}${name} to your cart.`,
+      })
+    );
+  }
+
+  if (params.resultMode === "cart_added_pause") {
+    return parseAgentResponse(
+      JSON.stringify({
+        intent: "add_to_cart",
+        message: "Done! Added to your cart. Would you like to checkout?",
       })
     );
   }

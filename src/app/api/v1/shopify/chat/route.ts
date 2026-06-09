@@ -21,6 +21,7 @@ import {
   applyCheckoutDetailsToCart,
   getCartCheckoutUrl,
   getCartSummary,
+  getCartWithLines,
   type StorefrontStore,
 } from "@/lib/shopify/storefront";
 import { parseIntent } from "@/lib/shopify/intent-parser";
@@ -36,13 +37,12 @@ import {
 } from "@/lib/shopify/checkout-collector";
 import {
   buildProductSuggestions,
-  isDirectCartAddRequest,
   parseRequestedQuantity,
   pickDefaultVariant,
   productsForDisplay,
   resolveProductSelection,
 } from "@/lib/shopify/product-selection";
-import type { ChatSessionContext, SessionMessage, ShopifyProduct } from "@/lib/shopify/types";
+import type { CartLineItem, ChatSessionContext, SessionMessage, ShopifyProduct } from "@/lib/shopify/types";
 
 export const runtime = "nodejs";
 
@@ -239,6 +239,7 @@ export async function POST(req: NextRequest) {
     totalPrice?: string | null;
     cartId?: string;
   } | null = null;
+  let cartLines: CartLineItem[] = [];
 
   if (
     sessionContext.stage === "collecting_checkout" &&
@@ -348,90 +349,131 @@ export async function POST(req: NextRequest) {
     clarification = undefined;
     sessionContext = applySearchResultsToContext(products, usedSearchQuery, sessionContext);
   } else if (!checkoutOnlyTurn && intent.intent === "select_product") {
-    if (intent.quantity && sessionContext.selectedProduct) {
+    const catalog = sessionContext.lastProducts ?? [];
+
+    if (intent.quantity && sessionContext.selectedProduct && sessionContext.selectedVariantId) {
       const selected = sessionContext.selectedProduct;
       sessionContext = {
         ...sessionContext,
         selectedQuantity: intent.quantity,
-        stage: sessionContext.selectedVariantId ? "awaiting_confirm" : sessionContext.stage,
+        stage: "awaiting_cart_confirm",
       };
       products = [selected];
-    } else {
-    const catalog = sessionContext.lastProducts ?? [];
-    const selection = resolveProductSelection(parsed.data.message, catalog, {
-      productIndex: intent.productIndex,
-      productTitle: intent.productTitle,
-    });
-
-    if (selection && !intent.needsClarification) {
-      const variantId = intent.variantId ?? selection.variantId;
-      const quantity = intent.quantity ?? sessionContext.selectedQuantity;
-      sessionContext = {
-        ...sessionContext,
-        stage: variantId ? "awaiting_confirm" : "presenting_options",
-        selectedProduct: selection.product,
-        selectedVariantId: variantId,
-        selectedQuantity: quantity,
-      };
-      products = [selection.product];
-    } else if (selection && intent.needsClarification) {
-      sessionContext = {
-        ...sessionContext,
-        stage: "presenting_options",
-        selectedProduct: selection.product,
-        selectedVariantId: undefined,
-      };
-      products = [selection.product];
-      clarification = intent.clarification;
-    } else if (intent.variantId && sessionContext.selectedProduct) {
+    } else if (
+      (sessionContext.stage === "selecting_variant" || sessionContext.stage === "awaiting_quantity") &&
+      sessionContext.selectedProduct &&
+      intent.variantId
+    ) {
       const selected = sessionContext.selectedProduct;
       sessionContext = {
         ...sessionContext,
-        stage: "awaiting_confirm",
         selectedVariantId: intent.variantId,
+        stage: "awaiting_quantity",
       };
       products = [selected];
     } else {
-      products = sessionContext.lastProducts ?? [];
-    }
+      const selection = resolveProductSelection(parsed.data.message, catalog, {
+        productIndex: intent.productIndex,
+        productTitle: intent.productTitle,
+      });
+
+      if (selection && !intent.needsClarification) {
+        const variantId = intent.variantId ?? selection.variantId;
+
+        if (selection.needsVariantChoice && !variantId) {
+          sessionContext = {
+            ...sessionContext,
+            stage: "selecting_variant",
+            selectedProduct: selection.product,
+            selectedVariantId: undefined,
+          };
+          products = [selection.product];
+          clarification = {
+            question: `Which option for ${selection.product.title}?`,
+            suggestions: selection.product.variants
+              .filter((v) => v.available)
+              .slice(0, 4)
+              .map((v) => v.title),
+          };
+        } else {
+          sessionContext = {
+            ...sessionContext,
+            stage: "awaiting_quantity",
+            selectedProduct: selection.product,
+            selectedVariantId: variantId,
+            selectedQuantity: intent.quantity,
+          };
+          products = [selection.product];
+        }
+      } else if (selection && intent.needsClarification) {
+        sessionContext = {
+          ...sessionContext,
+          stage: "selecting_variant",
+          selectedProduct: selection.product,
+          selectedVariantId: undefined,
+        };
+        products = [selection.product];
+        clarification = intent.clarification;
+      } else if (intent.variantId && sessionContext.selectedProduct) {
+        const selected = sessionContext.selectedProduct;
+        sessionContext = {
+          ...sessionContext,
+          stage: "awaiting_quantity",
+          selectedVariantId: intent.variantId,
+        };
+        products = [selected];
+      } else {
+        products = sessionContext.lastProducts ?? [];
+      }
     }
   } else if (intent.intent === "confirm_add_to_cart" || intent.intent === "add_to_cart") {
-    const variantId =
-      intent.variantId ??
-      sessionContext.selectedVariantId ??
-      (sessionContext.selectedProduct ? pickDefaultVariant(sessionContext.selectedProduct) : undefined);
-    if (variantId) {
-      try {
-        const qty = Math.min(
-          10,
-          Math.max(1, intent.quantity ?? sessionContext.selectedQuantity ?? 1)
-        );
-        const cart = await addToCart({
-          store: storefrontStore,
-          variantId,
-          quantity: qty,
-          cartId: session.cartToken,
-        });
-        await db
-          .update(shopChatSessions)
-          .set({ cartToken: cart.cartId })
-          .where(eq(shopChatSessions.id, session.id));
-        session = { ...session, cartToken: cart.cartId };
-        const afterAdd = buildSessionAfterCartAdd({
-          sessionContext,
-          cart: { cartId: cart.cartId, totalPrice: cart.totalPrice },
-          variantId,
-          quantity: qty,
-        });
-        cartAction = afterAdd.cartAction;
-        sessionContext = afterAdd.sessionContext;
-        assistantMessageOverride = afterAdd.introMessage;
-        products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
-      } catch (err) {
-        console.error(LOG_PREFIX, "confirm add to cart failed", {
-          variantId,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    if (
+      sessionContext.stage === "awaiting_quantity" &&
+      (intent.quantity || parseRequestedQuantity(parsed.data.message))
+    ) {
+      const qty = intent.quantity ?? parseRequestedQuantity(parsed.data.message) ?? 1;
+      sessionContext = {
+        ...sessionContext,
+        stage: "awaiting_cart_confirm",
+        selectedQuantity: qty,
+      };
+      products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
+    } else {
+      const variantId =
+        intent.variantId ??
+        sessionContext.selectedVariantId ??
+        (sessionContext.selectedProduct ? pickDefaultVariant(sessionContext.selectedProduct) : undefined);
+
+      if (variantId) {
+        try {
+          const qty = Math.min(10, Math.max(1, intent.quantity ?? sessionContext.selectedQuantity ?? 1));
+          const cart = await addToCart({
+            store: storefrontStore,
+            variantId,
+            quantity: qty,
+            cartId: session.cartToken,
+          });
+          await db
+            .update(shopChatSessions)
+            .set({ cartToken: cart.cartId })
+            .where(eq(shopChatSessions.id, session.id));
+          session = { ...session, cartToken: cart.cartId };
+          const afterAdd = buildSessionAfterCartAdd({
+            sessionContext,
+            cart: { cartId: cart.cartId, totalPrice: cart.totalPrice },
+            variantId,
+            quantity: qty,
+          });
+          cartAction = afterAdd.cartAction;
+          sessionContext = afterAdd.sessionContext;
+          assistantMessageOverride = afterAdd.introMessage;
+          products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
+        } catch (err) {
+          console.error(LOG_PREFIX, "add to cart failed", {
+            variantId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     }
   } else if (!checkoutOnlyTurn && intent.intent === "start_checkout") {
@@ -477,8 +519,53 @@ export async function POST(req: NextRequest) {
     if (sessionContext.selectedProduct) {
       products = [sessionContext.selectedProduct];
     }
+  } else if (!checkoutOnlyTurn && intent.intent === "show_cart") {
+    if (!session.cartToken) {
+      assistantMessageOverride = "Your cart is empty right now. Tell me what you'd like to buy!";
+    } else {
+      const cartData = await getCartWithLines({
+        store: storefrontStore,
+        cartId: session.cartToken,
+      }).catch(() => null);
+
+      if (!cartData || cartData.lines.length === 0) {
+        assistantMessageOverride = "Your cart is empty right now. Tell me what you'd like to buy!";
+      } else {
+        cartLines = cartData.lines;
+        cartAction = {
+          checkoutUrl: cartData.checkoutUrl,
+          totalPrice: cartData.totalPrice,
+          cartId: session.cartToken,
+        };
+      }
+    }
+    products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
+  } else if (intent.intent === "chitchat" && sessionContext.stage === "awaiting_cart_confirm") {
+    sessionContext = {
+      ...sessionContext,
+      stage: sessionContext.lastProducts?.length ? "presenting_options" : "greeting",
+      selectedQuantity: undefined,
+    };
+    products = sessionContext.lastProducts ?? [];
+  } else if (intent.intent === "chitchat" && sessionContext.stage === "cart_added_pause") {
+    sessionContext = {
+      ...sessionContext,
+      stage: sessionContext.lastProducts?.length ? "presenting_options" : "greeting",
+    };
+    products =
+      sessionContext.lastProducts ??
+      (sessionContext.selectedProduct ? [sessionContext.selectedProduct] : []);
   } else if (intent.intent === "chitchat" && history.length === 0) {
     sessionContext = { ...sessionContext, stage: "greeting" };
+  } else if (sessionContext.stage === "cart_added_pause") {
+    if (session.cartToken) {
+      const summary = await getCartSummary({
+        store: storefrontStore,
+        cartId: session.cartToken,
+      }).catch(() => null);
+      if (summary) cartAction = { cartId: session.cartToken, totalPrice: summary.totalPrice };
+    }
+    products = sessionContext.selectedProduct ? [sessionContext.selectedProduct] : [];
   } else if (sessionContext.stage === "awaiting_confirm" && sessionContext.selectedProduct) {
     if (intent.quantity) {
       sessionContext = { ...sessionContext, selectedQuantity: intent.quantity };
@@ -488,56 +575,6 @@ export async function POST(req: NextRequest) {
     products = sessionContext.lastProducts ?? [];
   } else {
     products = [];
-  }
-
-  if (
-    !cartAction &&
-    sessionContext.selectedProduct &&
-    isDirectCartAddRequest(parsed.data.message)
-  ) {
-    const variantId =
-      sessionContext.selectedVariantId ??
-      pickDefaultVariant(sessionContext.selectedProduct);
-    if (variantId) {
-      try {
-        const qty = Math.min(
-          10,
-          Math.max(
-            1,
-            intent.quantity ??
-              parseRequestedQuantity(parsed.data.message) ??
-              sessionContext.selectedQuantity ??
-              1
-          )
-        );
-        const cart = await addToCart({
-          store: storefrontStore,
-          variantId,
-          quantity: qty,
-          cartId: session.cartToken,
-        });
-        await db
-          .update(shopChatSessions)
-          .set({ cartToken: cart.cartId })
-          .where(eq(shopChatSessions.id, session.id));
-        session = { ...session, cartToken: cart.cartId };
-        const afterAdd = buildSessionAfterCartAdd({
-          sessionContext,
-          cart: { cartId: cart.cartId, totalPrice: cart.totalPrice },
-          variantId,
-          quantity: qty,
-        });
-        cartAction = afterAdd.cartAction;
-        sessionContext = afterAdd.sessionContext;
-        assistantMessageOverride = afterAdd.introMessage;
-        products = [sessionContext.selectedProduct!];
-      } catch (err) {
-        console.error(LOG_PREFIX, "direct cart add fallback failed", {
-          variantId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
   }
 
   clarification = catalogBackedClarification(
@@ -555,13 +592,28 @@ export async function POST(req: NextRequest) {
     | "greeting"
     | "confirm_offer"
     | "cart_added"
+    | "cart_added_pause"
+    | "show_cart"
+    | "variant_selection"
+    | "awaiting_quantity"
+    | "awaiting_cart_confirm"
     | "collecting_checkout"
     | "checkout_ready" = "partial";
 
-  if (sessionContext.stage === "checkout_ready" && cartAction?.checkoutUrl) {
+  if (intent.intent === "show_cart" && !assistantMessageOverride) {
+    resultMode = "show_cart";
+  } else if (sessionContext.stage === "checkout_ready" && cartAction?.checkoutUrl) {
     resultMode = "checkout_ready";
   } else if (sessionContext.stage === "collecting_checkout") {
     resultMode = "collecting_checkout";
+  } else if (sessionContext.stage === "cart_added_pause") {
+    resultMode = "cart_added_pause";
+  } else if (sessionContext.stage === "awaiting_cart_confirm" && sessionContext.selectedProduct) {
+    resultMode = "awaiting_cart_confirm";
+  } else if (sessionContext.stage === "awaiting_quantity") {
+    resultMode = "awaiting_quantity";
+  } else if (sessionContext.stage === "selecting_variant" && sessionContext.selectedProduct) {
+    resultMode = "variant_selection";
   } else if (cartAction) {
     resultMode = "cart_added";
   } else if (intent.intent === "chitchat" && sessionContext.stage === "greeting" && history.length === 0) {
@@ -599,6 +651,7 @@ export async function POST(req: NextRequest) {
         selectedProduct: sessionContext.selectedProduct,
         sessionContext,
         selectedQuantity: sessionContext.selectedQuantity,
+        cartLines,
       });
 
   console.log(LOG_PREFIX, "agent reply", {

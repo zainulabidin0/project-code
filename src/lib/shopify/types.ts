@@ -26,10 +26,28 @@ export type ConversationStage =
   | "greeting"
   | "no_results"
   | "presenting_options"
+  | "selecting_variant"
+  | "awaiting_quantity"
+  | "awaiting_cart_confirm"
   | "awaiting_confirm"
+  | "cart_added_pause"
   | "collecting_checkout"
   | "checkout_ready"
   | "completed";
+
+export type CartLineItem = {
+  title: string;
+  variantTitle: string;
+  quantity: number;
+  price: string;
+  currency: string;
+};
+
+export type CartSummaryWithLines = {
+  checkoutUrl: string;
+  totalPrice: string | null;
+  lines: CartLineItem[];
+};
 
 export type CheckoutDraft = {
   fullName?: string;

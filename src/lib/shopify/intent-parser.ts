@@ -11,8 +11,11 @@ import type { ParsedFilters } from "@/lib/shopify/storefront";
 import { getGroqKey, groqChatCompletion, GROQ_INTENT_MODEL } from "@/lib/groq/client";
 import {
   isBrowseAlternativesRequest,
+  isConfirmYes,
   isDirectCartAddRequest,
   isPurchaseIntent,
+  isQuantityOnlyMessage,
+  isShowCartIntent,
   isVagueGreeting,
   parseRequestedQuantity,
   pickDefaultVariant,
@@ -176,8 +179,83 @@ function ruleBasedIntent(message: string, opts?: ParseIntentOptions): ParsedInte
     return { intent: "chitchat", confidence: "high", needsClarification: false };
   }
 
+  if (isShowCartIntent(trimmed)) {
+    return {
+      intent: "show_cart",
+      confidence: "high",
+      needsClarification: false,
+    };
+  }
+
+  if (context?.stage === "cart_added_pause") {
+    if (isCheckoutIntent(trimmed) || isConfirmYes(trimmed)) {
+      return {
+        intent: "start_checkout",
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+    if (/\b(no|nope|keep|continue|more|shop|nahi|nai)\b/i.test(trimmed)) {
+      return {
+        intent: "chitchat",
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
+  if (context?.stage === "awaiting_cart_confirm" && context.selectedProduct) {
+    if (isConfirmYes(trimmed)) {
+      const variantId = context.selectedVariantId ?? pickDefaultVariant(context.selectedProduct);
+      if (variantId) {
+        return {
+          intent: "confirm_add_to_cart",
+          variantId,
+          quantity: context.selectedQuantity ?? 1,
+          confidence: "high",
+          needsClarification: false,
+        };
+      }
+    }
+    if (/^(no|nope|cancel|nevermind|never mind|nahi|nai)\b/i.test(trimmed)) {
+      return {
+        intent: "chitchat",
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
+  if (context?.stage === "awaiting_quantity" && context.selectedProduct) {
+    const qty = isQuantityOnlyMessage(trimmed) ?? parseRequestedQuantity(trimmed);
+    if (qty) {
+      return {
+        intent: "select_product",
+        productTitle: context.selectedProduct.title,
+        variantId: context.selectedVariantId,
+        quantity: qty,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
+  if (context?.stage === "selecting_variant" && context.selectedProduct) {
+    const variantId = resolveVariantFromMessage(trimmed, context.selectedProduct);
+    if (variantId) {
+      return {
+        intent: "select_product",
+        productTitle: context.selectedProduct.title,
+        variantId,
+        confidence: "high",
+        needsClarification: false,
+      };
+    }
+  }
+
   if (
     context?.stage !== "collecting_checkout" &&
+    context?.stage !== "cart_added_pause" &&
     isCheckoutIntent(trimmed)
   ) {
     return {
@@ -187,7 +265,14 @@ function ruleBasedIntent(message: string, opts?: ParseIntentOptions): ParsedInte
     };
   }
 
-  if (context?.selectedProduct && isDirectCartAddRequest(trimmed)) {
+  if (
+    context?.selectedProduct &&
+    isDirectCartAddRequest(trimmed) &&
+    context.stage !== "selecting_variant" &&
+    context.stage !== "awaiting_quantity" &&
+    context.stage !== "awaiting_cart_confirm" &&
+    context.stage !== "cart_added_pause"
+  ) {
     const qty = parseRequestedQuantity(trimmed);
     const variantId =
       context.selectedVariantId ?? pickDefaultVariant(context.selectedProduct);

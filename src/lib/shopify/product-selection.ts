@@ -264,18 +264,47 @@ export function isConfirmYes(message: string): boolean {
   );
 }
 
+export function isShowCartIntent(message: string): boolean {
+  const text = message.trim().toLowerCase();
+  return /\b(show(?:\s+me)?(?:\s+my)?\s+cart|view(?:\s+my)?\s+cart|my\s+cart|cart\s+(?:details?|items?|products?)|what(?:'s|\s+is)\s+in\s+(?:my\s+)?cart|cart\s+dekhao|mera\s+cart)\b/.test(
+    text
+  );
+}
+
+export function isCartAddedPauseConfirm(message: string): boolean {
+  return isConfirmYes(message);
+}
+
+export function isQuantityOnlyMessage(message: string): number | null {
+  const text = message.trim();
+  const numMap: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  const wordMatch = numMap[text.toLowerCase()];
+  if (wordMatch !== undefined) return wordMatch;
+  const numMatch = text.match(/^(\d+)$/);
+  if (numMatch) {
+    const n = parseInt(numMatch[1], 10);
+    if (n >= 1 && n <= 10) return n;
+  }
+  return null;
+}
+
 /** Shopper wants to see real catalog items after a failed search. */
 export function isBrowseAlternativesRequest(message: string): boolean {
   const text = message.trim().toLowerCase();
-  if (/^(yes|yeah|yep|yup|sure|ok|okay)[!.?\s]*$/.test(text)) return true;
-  if (
-    /\b(show me|what else|something else|something similar|other products|alternatives|what do you have|what you have|else you have|more options|popular products|best selling|latest products|browse|look around|see what you have)\b/.test(
-      text
-    )
-  ) {
-    return true;
-  }
-  return false;
+  return /\b(show me|what else|something else|something similar|other products|alternatives|what do you have|what you have|else you have|more options|popular products|best selling|latest products|browse|look around|see what you have)\b/.test(
+    text
+  );
 }
 
 export function isVagueGreeting(message: string): boolean {
