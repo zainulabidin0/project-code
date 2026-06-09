@@ -1,7 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { shopifyStores } from "@/lib/db/schema";
-import { buildSelectableDeliveryAddress } from "@/lib/shopify/checkout-collector";
+import {
+  buildPrefilledCheckoutUrl,
+  buildSelectableDeliveryAddress,
+} from "@/lib/shopify/checkout-collector";
 import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
 import type { CartLineItem, CartSummaryWithLines, SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
 
@@ -811,12 +814,15 @@ export async function applyCheckoutDetailsToCart(params: {
   const cart = addressResult.cart ?? identityData.cartBuyerIdentityUpdate.cart;
   if (!cart?.checkoutUrl) throw new Error("Checkout URL unavailable");
 
+  const prefilledCheckoutUrl = buildPrefilledCheckoutUrl(cart.checkoutUrl, params.details);
+
   console.log(LOG_PREFIX, "apply complete", {
     cartId: params.cartId,
-    checkoutUrl: cart.checkoutUrl,
+    checkoutUrl: prefilledCheckoutUrl,
+    usedQueryParamPrefill: prefilledCheckoutUrl !== cart.checkoutUrl,
   });
 
-  return { checkoutUrl: cart.checkoutUrl };
+  return { checkoutUrl: prefilledCheckoutUrl };
 }
 
 export async function getCartCheckoutUrl(params: {

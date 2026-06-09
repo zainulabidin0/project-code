@@ -35,6 +35,7 @@ import {
   buildSavedAddressSummary,
   buildSessionAfterCartAdd,
   buildUseSavedAddressPrompt,
+  enrichCheckoutUrlWithDraft,
   DEFAULT_COUNTRY_CODE,
   isCheckoutDraftComplete,
   isShowSavedDetailsRequest,
@@ -412,7 +413,10 @@ export async function POST(req: NextRequest) {
     }).catch(() => null);
     if (summary) {
       cartAction = {
-        checkoutUrl: summary.checkoutUrl,
+        checkoutUrl: enrichCheckoutUrlWithDraft(
+          summary.checkoutUrl,
+          sessionContext.checkoutDraft
+        ),
         cartId: session.cartToken,
         totalPrice: summary.totalPrice,
       };
@@ -621,7 +625,10 @@ export async function POST(req: NextRequest) {
       if (sessionContext.stage === "checkout_ready") {
         if (summary) {
           cartAction = {
-            checkoutUrl: summary.checkoutUrl,
+            checkoutUrl: enrichCheckoutUrlWithDraft(
+              summary.checkoutUrl,
+              sessionContext.checkoutDraft
+            ),
             cartId: session.cartToken,
             totalPrice: summary.totalPrice,
           };

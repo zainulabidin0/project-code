@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyCheckoutAnswer,
+  buildPrefilledCheckoutUrl,
   buildSelectableDeliveryAddress,
   createInitialCheckoutDraft,
   getNextCheckoutField,
@@ -103,4 +104,30 @@ test("toCartCheckoutDetails infers province from city", () => {
 test("splitFullName handles single and multi part names", () => {
   assert.deepEqual(splitFullName("Ali"), { firstName: "Ali", lastName: "Ali" });
   assert.deepEqual(splitFullName("Ali Khan"), { firstName: "Ali", lastName: "Khan" });
+});
+
+test("buildPrefilledCheckoutUrl appends checkout query params", () => {
+  const base =
+    "https://my-cart-10001.myshopify.com/checkouts/cn/hWND4oVlkI3PmqJOaaLRrW0Q/en-pk";
+  const url = buildPrefilledCheckoutUrl(base, {
+    email: "test@gmail.com",
+    firstName: "Ali",
+    lastName: "Khan",
+    phone: "+923001234567",
+    city: "Karachi",
+    zip: "75500",
+    countryCode: "PK",
+    address1: "House 127/E Block",
+    provinceCode: "SD",
+  });
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get("checkout[email]"), "test@gmail.com");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][first_name]"), "Ali");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][last_name]"), "Khan");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][phone]"), "+923001234567");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][city]"), "Karachi");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][zip]"), "75500");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][country]"), "PK");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][address1]"), "House 127/E Block");
+  assert.equal(parsed.searchParams.get("checkout[shipping_address][province]"), "SD");
 });

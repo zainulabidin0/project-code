@@ -434,6 +434,62 @@ export function normalizePhoneE164(phone: string, countryCode = DEFAULT_COUNTRY_
   return `+${digits}`;
 }
 
+export type CheckoutUrlPrefillDetails = {
+  email?: string;
+  phone?: string;
+  countryCode?: string;
+  firstName?: string;
+  lastName?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  provinceCode?: string;
+  zip?: string;
+};
+
+/**
+ * Appends Shopify checkout[...] query params to a cart checkoutUrl.
+ * Works with /checkouts/cn/... URLs from cart.checkoutUrl.
+ * Shopify may ignore some fields on stores without Checkout Extensibility — best-effort prefill.
+ */
+export function buildPrefilledCheckoutUrl(
+  baseCheckoutUrl: string,
+  details: CheckoutUrlPrefillDetails
+): string {
+  if (!baseCheckoutUrl?.trim()) return baseCheckoutUrl;
+
+  try {
+    const url = new URL(baseCheckoutUrl);
+    const set = (key: string, value?: string) => {
+      const trimmed = value?.trim();
+      if (trimmed) url.searchParams.set(key, trimmed);
+    };
+
+    set("checkout[email]", details.email);
+    set("checkout[shipping_address][first_name]", details.firstName);
+    set("checkout[shipping_address][last_name]", details.lastName);
+    set("checkout[shipping_address][address1]", details.address1);
+    set("checkout[shipping_address][address2]", details.address2);
+    set("checkout[shipping_address][city]", details.city);
+    set("checkout[shipping_address][province]", details.provinceCode);
+    set("checkout[shipping_address][country]", details.countryCode);
+    set("checkout[shipping_address][zip]", details.zip);
+    set("checkout[shipping_address][phone]", details.phone);
+
+    return url.toString();
+  } catch {
+    return baseCheckoutUrl;
+  }
+}
+
+export function enrichCheckoutUrlWithDraft(
+  baseCheckoutUrl: string,
+  draft?: CheckoutDraft
+): string {
+  if (!draft) return baseCheckoutUrl;
+  return buildPrefilledCheckoutUrl(baseCheckoutUrl, toCartCheckoutDetails(draft));
+}
+
 export function toCartCheckoutDetails(draft: CheckoutDraft) {
   const { firstName, lastName } = splitFullName(draft.fullName ?? "Customer");
   const countryCode = draft.countryCode ?? DEFAULT_COUNTRY_CODE;
