@@ -1,0 +1,145 @@
+{% comment %}
+  AddressFix product review form — sentiment analysis on submit.
+  1. Online Store → Themes → Edit code → Snippets → Add snippet: product-review-form.liquid
+  2. Paste this file's contents.
+  3. In your product template, add: {% render 'product-review-form' %}
+  4. Replace YOUR_APP_URL below with your AddressFix app URL (e.g. https://addressfix.dev).
+  5. Connect your Shopify store to this project via Dashboard → ShopAssist.
+{% endcomment %}
+
+<div id="af-review-form" class="af-review-form">
+  <h3 class="af-review-title">Write a review</h3>
+  <textarea
+    id="af-review-text"
+    class="af-review-textarea"
+    rows="4"
+    placeholder="Share your experience with this product…"
+    maxlength="5000"
+  ></textarea>
+  <button type="button" id="af-review-submit" class="af-review-submit">
+    Submit review
+  </button>
+  <p id="af-review-status" class="af-review-status" hidden></p>
+  <p id="af-review-result" class="af-review-result" hidden></p>
+</div>
+
+<style>
+  .af-review-form {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+  }
+  .af-review-title {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+  }
+  .af-review-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem;
+    font: inherit;
+    resize: vertical;
+  }
+  .af-review-submit {
+    margin-top: 0.75rem;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+  .af-review-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .af-review-status {
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #666;
+  }
+  .af-review-result {
+    margin-top: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .af-review-result.positive { color: #0a7a3e; }
+  .af-review-result.negative { color: #b42318; }
+</style>
+
+<script>
+(function () {
+  var API_BASE = "YOUR_APP_URL";
+  var shop = {{ shop.permanent_domain | json }};
+  var productId = {{ product.id | json }};
+  var productHandle = {{ product.handle | json }};
+  var reviewerName = {{ customer.name | default: "Guest" | json }};
+
+  var textEl = document.getElementById("af-review-text");
+  var submitEl = document.getElementById("af-review-submit");
+  var statusEl = document.getElementById("af-review-status");
+  var resultEl = document.getElementById("af-review-result");
+
+  if (!textEl || !submitEl) return;
+
+  function showStatus(msg) {
+    statusEl.hidden = false;
+    statusEl.textContent = msg;
+  }
+
+  function hideResult() {
+    resultEl.hidden = true;
+    resultEl.className = "af-review-result";
+    resultEl.textContent = "";
+  }
+
+  async function submitReview(review) {
+    var res = await fetch(API_BASE.replace(/\/+$/, "") + "/api/v1/shopify/sentiment", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shop-Domain": shop,
+      },
+      body: JSON.stringify({
+        review: review,
+        reviewerName: reviewerName,
+        reviewerMeta: {
+          productId: String(productId),
+          productHandle: productHandle,
+        },
+      }),
+    });
+    var json = await res.json();
+    if (!json.success) {
+      var errMsg = (json.error && json.error.message) || "Could not analyze review";
+      throw new Error(errMsg);
+    }
+    return json.data;
+  }
+
+  submitEl.addEventListener("click", async function () {
+    var text = textEl.value.trim();
+    if (!text) return;
+
+    submitEl.disabled = true;
+    hideResult();
+    showStatus("Analyzing your review…");
+
+    try {
+      var data = await submitReview(text);
+      statusEl.hidden = true;
+      resultEl.hidden = false;
+      resultEl.className =
+        "af-review-result " + (data.sentiment === "POSITIVE" ? "positive" : "negative");
+      resultEl.textContent =
+        data.sentiment +
+        " (" +
+        data.confidence +
+        "% confidence) — store net score: " +
+        data.projectNetScore;
+      textEl.value = "";
+    } catch (e) {
+      showStatus(e.message || "Something went wrong. Please try again.");
+    } finally {
+      submitEl.disabled = false;
+    }
+  });
+})();
+</script>

@@ -5,11 +5,12 @@ import {
   DEFAULT_API_BASE,
   DOCS_NAV_REVIEWS,
   buildReviewsSnippets,
+  buildReviewsShopifySnippets,
   buildSentimentBatchSnippets,
   buildSentimentSingleSnippets,
   normalizeBase,
 } from "@/lib/docs-content";
-import type { Framework } from "@/lib/docs-content";
+import type { AddressFramework } from "@/lib/docs-content";
 import {
   CodeBlock,
   DocsChrome,
@@ -39,8 +40,12 @@ export default function ReviewsApiDocsPage() {
     () => buildReviewsSnippets(apiBase),
     [apiBase]
   );
+  const reviewShopifySnip = useMemo(
+    () => buildReviewsShopifySnippets(apiBase),
+    [apiBase]
+  );
 
-  const [fw, setFw] = useState<Framework>("html");
+  const [fw, setFw] = useState<AddressFramework>("html");
   const [modalOpen, setModalOpen] = useState(false);
   const activeSec = useDocsActiveSection(
     DOCS_NAV_REVIEWS.map((n) => n.id)
@@ -65,7 +70,11 @@ export default function ReviewsApiDocsPage() {
               <code className="text-zinc-400">{apiBase}</code>
             </p>
             <div className="mt-8">
-              <FrameworkTabs active={fw} onChange={setFw} />
+              <FrameworkTabs
+                active={fw}
+                onChange={setFw}
+                includeShopify
+              />
             </div>
 
             <DocsAuthSection fw={fw} />
@@ -108,10 +117,23 @@ export default function ReviewsApiDocsPage() {
                   ? "JavaScript example"
                   : fw === "react"
                     ? "React example"
-                    : "Next.js Server Action"}
+                    : fw === "nextjs"
+                      ? "Next.js Server Action"
+                      : "Shopify theme + App Proxy"}
               </h3>
+              {fw === "shopify" && (
+                <p className="mt-3 text-sm leading-relaxed text-zinc-500">
+                  Connect your store via ShopAssist, then add the review form snippet
+                  to your product template. The theme posts to{" "}
+                  <code className="text-zinc-400">POST /api/v1/shopify/sentiment</code>{" "}
+                  with <code className="text-zinc-400">X-Shop-Domain</code> — no API
+                  key in Liquid.
+                </p>
+              )}
               <CodeBlock
-                language={fw === "html" ? "html" : "typescript"}
+                language={
+                  fw === "html" || fw === "shopify" ? "liquid" : "typescript"
+                }
                 code={sentSingle[fw]}
               />
             </section>
@@ -140,10 +162,25 @@ export default function ReviewsApiDocsPage() {
 }`}
               />
               <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
-                {fw === "html" ? "JavaScript" : fw === "react" ? "React" : "Next.js"}
+                {fw === "html"
+                  ? "JavaScript"
+                  : fw === "react"
+                    ? "React"
+                    : fw === "nextjs"
+                      ? "Next.js"
+                      : "Shopify batch import"}
               </h3>
+              {fw === "shopify" && (
+                <p className="mt-3 text-sm leading-relaxed text-zinc-500">
+                  Use batch classification when migrating existing Shopify reviews
+                  into AddressFix. The storefront calls the App Proxy; the embedded
+                  admin imports via{" "}
+                  <code className="text-zinc-400">POST /api/v1/sentiment/batch</code>{" "}
+                  with the key on the server.
+                </p>
+              )}
               <CodeBlock
-                language={fw === "html" ? "javascript" : "typescript"}
+                language={fw === "shopify" ? "javascript" : fw === "html" ? "javascript" : "typescript"}
                 code={sentBatch[fw]}
               />
             </section>
@@ -172,21 +209,41 @@ export default function ReviewsApiDocsPage() {
                   <code className="text-violet-300">/api/v1/reviews/:id</code>
                 </li>
               </ul>
-              <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
-                List, stats, delete (cURL)
-              </h3>
-              <CodeBlock language="bash" code={reviewSnip.curl} />
-              <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
-                JavaScript (list + stats)
-              </h3>
-              <CodeBlock language="typescript" code={reviewSnip.list} />
-              <div className="mt-3">
-                <CodeBlock language="typescript" code={reviewSnip.stats} />
-              </div>
-              <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
-                PHP
-              </h3>
-              <CodeBlock language="php" code={reviewSnip.php} />
+              {fw === "shopify" ? (
+                <>
+                  <p className="mt-4 text-sm leading-relaxed text-zinc-500">
+                    List, stats, and delete are{" "}
+                    <strong className="text-zinc-300">server-side only</strong> in
+                    your Shopify embedded admin — never call these from the
+                    storefront theme.
+                  </p>
+                  <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                    Embedded admin (list + stats)
+                  </h3>
+                  <CodeBlock language="typescript" code={reviewShopifySnip.list} />
+                  <div className="mt-3">
+                    <CodeBlock language="typescript" code={reviewShopifySnip.stats} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                    List, stats, delete (cURL)
+                  </h3>
+                  <CodeBlock language="bash" code={reviewSnip.curl} />
+                  <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                    JavaScript (list + stats)
+                  </h3>
+                  <CodeBlock language="typescript" code={reviewSnip.list} />
+                  <div className="mt-3">
+                    <CodeBlock language="typescript" code={reviewSnip.stats} />
+                  </div>
+                  <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                    PHP
+                  </h3>
+                  <CodeBlock language="php" code={reviewSnip.php} />
+                </>
+              )}
             </section>
 
             <section id="public-reviews" className="mt-16 scroll-mt-24">
@@ -202,6 +259,18 @@ export default function ReviewsApiDocsPage() {
                 Slugs: 3–100 chars, lowercase letters, numbers, hyphens. If not
                 public, the URL returns 404.
               </p>
+              {fw === "shopify" && (
+                <>
+                  <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                    Theme link (Liquid)
+                  </h3>
+                  <p className="mt-3 text-sm leading-relaxed text-zinc-500">
+                    Link from your storefront footer or product page to the public
+                    reviews page — no API key required.
+                  </p>
+                  <CodeBlock language="liquid" code={reviewShopifySnip.themeLink} />
+                </>
+              )}
             </section>
 
             <section id="response-sentiment" className="mt-16 scroll-mt-24">

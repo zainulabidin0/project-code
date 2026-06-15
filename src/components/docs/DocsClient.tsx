@@ -2,11 +2,12 @@
 
 import { useState, useRef, useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import type { Framework, DocNavItem } from "@/lib/docs-content";
+import type { Framework, AddressFramework, DocNavItem } from "@/lib/docs-content";
 import {
   getAddressPrompt,
   getSentimentPrompt,
   getShopifyPrompt,
+  getCourierPrompt,
 } from "@/lib/docs-content";
 
 export function CopyButton({ text }: { text: string }) {
@@ -58,18 +59,30 @@ export function CodeBlock({
   );
 }
 
+const FRAMEWORK_TABS: { id: Framework; label: string; icon: string }[] = [
+  { id: "html", label: "HTML / JS", icon: "{ }" },
+  { id: "react", label: "React", icon: "⚛" },
+  { id: "nextjs", label: "Next.js", icon: "▲" },
+];
+
+const SHOPIFY_TAB = {
+  id: "shopify" as const,
+  label: "Shopify",
+  icon: "🛍",
+};
+
 export function FrameworkTabs({
   active,
   onChange,
+  includeShopify = false,
 }: {
-  active: Framework;
-  onChange: (f: Framework) => void;
+  active: AddressFramework;
+  onChange: (f: AddressFramework) => void;
+  includeShopify?: boolean;
 }) {
-  const tabs: { id: Framework; label: string; icon: string }[] = [
-    { id: "html", label: "HTML / JS", icon: "{ }" },
-    { id: "react", label: "React", icon: "⚛" },
-    { id: "nextjs", label: "Next.js", icon: "▲" },
-  ];
+  const tabs = includeShopify
+    ? [...FRAMEWORK_TABS, SHOPIFY_TAB]
+    : FRAMEWORK_TABS;
 
   return (
     <div className="flex gap-1 rounded-xl bg-zinc-900/80 p-1">
@@ -118,11 +131,18 @@ export function DocsSidebar({ active, items }: { active: string; items: DocNavIt
   );
 }
 
-const OPTIONS: { id: Framework; label: string; desc: string; icon: string }[] = [
+const BASE_OPTIONS: { id: Framework; label: string; desc: string; icon: string }[] = [
   { id: "html", label: "HTML / CSS / JS", desc: "Single file, no build tools", icon: "{ }" },
   { id: "react", label: "React", desc: "Vite or CRA with hooks", icon: "⚛" },
   { id: "nextjs", label: "Next.js", desc: "App Router + Server Actions", icon: "▲" },
 ];
+
+const SHOPIFY_OPTION = {
+  id: "shopify" as const,
+  label: "Shopify",
+  desc: "Theme + App Proxy + webhooks",
+  icon: "🛍",
+};
 
 export function IntegrationPromptModal({
   open,
@@ -133,9 +153,13 @@ export function IntegrationPromptModal({
   open: boolean;
   onClose: () => void;
   apiBase: string;
-  kind: "address" | "sentiment" | "shopify";
+  kind: "address" | "sentiment" | "shopify" | "courier";
 }) {
-  const [selected, setSelected] = useState<Framework | null>(null);
+  const [selected, setSelected] = useState<AddressFramework | null>(null);
+  const options =
+    kind === "shopify"
+      ? BASE_OPTIONS
+      : [...BASE_OPTIONS, SHOPIFY_OPTION];
   const [copied, setCopied] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -159,8 +183,9 @@ export function IntegrationPromptModal({
   function getActivePrompt() {
     if (!selected) return "";
     if (kind === "address") return getAddressPrompt(selected, apiBase);
-    if (kind === "shopify") return getShopifyPrompt(selected, apiBase);
-    return getSentimentPrompt(selected, apiBase);
+    if (kind === "sentiment") return getSentimentPrompt(selected, apiBase);
+    if (kind === "courier") return getCourierPrompt(selected, apiBase);
+    return getShopifyPrompt(selected as Framework, apiBase);
   }
 
   function handleCopy() {
@@ -187,7 +212,9 @@ export function IntegrationPromptModal({
                 ? "Address correction"
                 : kind === "shopify"
                   ? "ShopAssist for Shopify"
-                  : "Sentiment and reviews"}{" "}
+                  : kind === "courier"
+                    ? "Courier compare (TCS vs Leopards)"
+                    : "Sentiment and reviews"}{" "}
               — choose your stack
             </p>
           </div>
@@ -201,7 +228,7 @@ export function IntegrationPromptModal({
         </div>
 
         <div className="space-y-2 px-6 py-5">
-          {OPTIONS.map((o) => (
+          {options.map((o) => (
             <button
               key={o.id}
               type="button"
@@ -285,7 +312,7 @@ export function IntegrationPromptModal({
   );
 }
 
-type DocsSubnav = "hub" | "address" | "reviews" | "shopify";
+type DocsSubnav = "hub" | "address" | "reviews" | "shopify" | "courier";
 
 function SubnavPill({
   href,
@@ -349,6 +376,9 @@ export function DocsChrome({
           </SubnavPill>
           <SubnavPill href="/docs/shopify" current={subnav === "shopify"}>
             ShopAssist
+          </SubnavPill>
+          <SubnavPill href="/docs/courier" current={subnav === "courier"}>
+            Courier API
           </SubnavPill>
         </nav>
 

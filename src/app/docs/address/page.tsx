@@ -8,7 +8,7 @@ import {
   buildSingleCorrectSnippets,
   normalizeBase,
 } from "@/lib/docs-content";
-import type { Framework } from "@/lib/docs-content";
+import type { AddressFramework } from "@/lib/docs-content";
 import {
   CodeBlock,
   DocsChrome,
@@ -32,7 +32,7 @@ export default function AddressApiDocsPage() {
   );
   const batchSnip = useMemo(() => buildBatchSnippets(apiBase), [apiBase]);
 
-  const [fw, setFw] = useState<Framework>("html");
+  const [fw, setFw] = useState<AddressFramework>("html");
   const [modalOpen, setModalOpen] = useState(false);
   const activeSec = useDocsActiveSection(
     DOCS_NAV_ADDRESS.map((n) => n.id)
@@ -56,7 +56,7 @@ export default function AddressApiDocsPage() {
               <code className="text-zinc-400">{apiBase}</code>
             </p>
             <div className="mt-8">
-              <FrameworkTabs active={fw} onChange={setFw} />
+              <FrameworkTabs active={fw} onChange={setFw} includeShopify />
             </div>
 
             <DocsAuthSection fw={fw} />
@@ -93,10 +93,23 @@ export default function AddressApiDocsPage() {
                   ? "JavaScript example"
                   : fw === "react"
                     ? "React hook"
-                    : "Next.js Server Action"}
+                    : fw === "nextjs"
+                      ? "Next.js Server Action"
+                      : "Shopify theme + App Proxy"}
               </h3>
+              {fw === "shopify" && (
+                <p className="mt-3 text-sm leading-relaxed text-zinc-500">
+                  Correct shipping addresses at checkout via a theme snippet that
+                  calls your App Proxy. The proxy verifies the Shopify request and
+                  forwards to{" "}
+                  <code className="text-zinc-400">POST /api/v1/correct</code> with
+                  your project key server-side.
+                </p>
+              )}
               <CodeBlock
-                language={fw === "html" ? "html" : "typescript"}
+                language={
+                  fw === "html" || fw === "shopify" ? "liquid" : "typescript"
+                }
                 code={singleSnip[fw]}
               />
             </section>
@@ -114,8 +127,17 @@ export default function AddressApiDocsPage() {
                 Send up to <strong className="text-zinc-200">50 addresses</strong>{" "}
                 in a single request. Each address is corrected independently.
               </p>
+              {fw === "shopify" && (
+                <p className="mt-3 text-sm leading-relaxed text-zinc-500">
+                  Use batch correction from an admin tool or proxy route when
+                  importing orders. The{" "}
+                  <code className="text-zinc-400">orders/create</code> webhook
+                  example below corrects each new order&apos;s shipping address
+                  after checkout.
+                </p>
+              )}
               <CodeBlock
-                language={fw === "html" ? "javascript" : "typescript"}
+                language={fw === "shopify" ? "javascript" : fw === "html" ? "javascript" : "typescript"}
                 code={batchSnip[fw]}
               />
             </section>

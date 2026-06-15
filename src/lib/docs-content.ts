@@ -1,6 +1,7 @@
 /** Shared copy, code samples, and nav metadata for /docs (no React). */
 
 export type Framework = "html" | "react" | "nextjs";
+export type AddressFramework = Framework | "shopify";
 export type DocNavItem = { id: string; label: string };
 
 export const DEFAULT_API_BASE = "https://address-fix-six.vercel.app";
@@ -29,6 +30,15 @@ export const DOCS_NAV_REVIEWS: DocNavItem[] = [
   { id: "rate-limits", label: "Rate limits" },
 ];
 
+export const DOCS_NAV_COURIER: DocNavItem[] = [
+  { id: "auth", label: "Authentication" },
+  { id: "compare", label: "Compare couriers" },
+  { id: "coverage", label: "City coverage" },
+  { id: "response", label: "Response" },
+  { id: "errors", label: "Error codes" },
+  { id: "rate-limits", label: "Rate limits" },
+];
+
 export const DOCS_NAV_SHOPIFY: DocNavItem[] = [
   { id: "auth", label: "Authentication" },
   { id: "install", label: "Install flow" },
@@ -36,6 +46,7 @@ export const DOCS_NAV_SHOPIFY: DocNavItem[] = [
   { id: "chat", label: "Chat" },
   { id: "voice", label: "Voice" },
   { id: "cart", label: "Cart" },
+  { id: "sentiment", label: "Product reviews" },
   { id: "widget-config", label: "Widget config" },
   { id: "response-shopify", label: "Response" },
   { id: "errors", label: "Error codes" },
@@ -49,6 +60,8 @@ export const DOCS_ERROR_ROWS: [string, string, string][] = [
   ["RATE_LIMIT_EXCEEDED", "429", "Per-minute limit hit"],
   ["QUOTA_EXCEEDED", "429", "Monthly quota reached"],
   ["INVALID_INPUT", "400", "Bad request body or missing fields"],
+  ["UNRESOLVED_CITY", "400", "From or to address could not be matched to a supported city"],
+  ["AMBIGUOUS_CITY", "400", "Address matched multiple cities — narrow the address text"],
   ["ADDRESS_TOO_LONG", "400", "Address exceeds 1,000 characters"],
   [
     "BATCH_TOO_LARGE",
@@ -73,7 +86,7 @@ export const DOCS_PLAN_ROWS: [string, string, string, string][] = [
 ];
 
 export function getAddressPrompt(
-  fw: Framework,
+  fw: AddressFramework,
   baseUrl: string = DEFAULT_API_BASE
 ): string {
   const api = normalizeBase(baseUrl);
@@ -124,6 +137,43 @@ Environment variable setup:
   - Include a .env.example file with: ADDRESSFIX_API_KEY=your_api_key_here
 
 This way the API key stays on the server and is never exposed to the browser.`;
+  }
+
+  if (fw === "shopify") {
+    return `${base}
+
+Framework: Shopify (theme + App Proxy + optional webhook).
+
+Environment variable setup:
+- Store ADDRESSFIX_API_KEY=af_live_xxxxx in your Shopify app server env (never in theme.liquid or client bundles).
+- Configure an App Proxy in the Shopify Partner dashboard:
+  - Subpath prefix: apps
+  - Subpath: addressfix
+  - Proxy URL: https://your-app.com/api/shopify/proxy/correct
+- Register an orders/create webhook if you want server-side correction after checkout.
+
+Architecture:
+/theme
+  snippets/address-correction.liquid   ← blur handler on shipping fields; calls /apps/addressfix/correct
+/app (Remix Shopify app or Next.js routes)
+  api/shopify/proxy/correct/route.ts ← verifies proxy HMAC, attaches x-api-key, forwards to ${api}/api/v1/correct
+  api/shopify/webhooks/orders/route.ts ← optional: correct shipping on order create
+
+Theme requirements:
+1. Never call ${api} directly from the storefront — use the App Proxy path only.
+2. On shipping address blur, POST { address } to /apps/addressfix/correct and replace the field value when corrected differs.
+3. Show a subtle "Address updated" hint when correctionType is AI_CORRECTED.
+4. Disable the button / show spinner while the proxy request is in flight.
+5. On proxy error (429, 503), leave the user's input unchanged and show a non-blocking toast.
+
+App proxy handler should:
+- Validate Shopify App Proxy signature (shared secret).
+- Read ADDRESSFIX_API_KEY from process.env.
+- Forward to POST ${api}/api/v1/correct with the key server-side.
+- Return the same { success, data | error } JSON shape to the theme.
+
+Optional webhook flow:
+- On orders/create, join shipping_address fields into one string, call the API, and update the order via Admin API when confidence > 0.8.`;
   }
 
   if (fw === "react") {
@@ -203,7 +253,7 @@ The client component (AddressForm.tsx) should:
 }
 
 export function getSentimentPrompt(
-  fw: Framework,
+  fw: AddressFramework,
   baseUrl: string = DEFAULT_API_BASE
 ): string {
   const api = normalizeBase(baseUrl);
@@ -229,6 +279,31 @@ Requirements:
 5. Optional: batch form for 2+ reviews
 6. Clean, accessible UI`;
 
+  if (fw === "shopify") {
+    return `${base}
+
+Framework: Shopify (product review form on the storefront).
+
+Prerequisites:
+- Connect the store to your project via Dashboard → ShopAssist (OAuth install).
+- No API key in the theme — use header X-Shop-Domain and POST ${api}/api/v1/shopify/sentiment.
+
+Architecture:
+/theme
+  snippets/product-review-form.liquid  ← textarea + submit; POST ${api}/api/v1/shopify/sentiment
+  sections/reviews-carousel.liquid   ← optional: link to public page ${api}/reviews/your-slug
+
+Theme requirements:
+1. Product page review form sends X-Shop-Domain: {{ shop.permanent_domain }} — never expose x-api-key.
+2. After submit, show sentiment badge (POSITIVE/NEGATIVE), confidence %, and projectNetScore.
+3. Disable submit and show loading text while the request is in flight.
+4. On 429 or MODEL_UNAVAILABLE, show a friendly retry message without losing user input.
+5. Optionally render a "See all reviews" link to your public slug page.
+
+Batch import (optional): POST ${api}/api/v1/shopify/sentiment/batch with the same X-Shop-Domain header.
+List/stats in dashboard: GET ${api}/api/v1/reviews with your project API key (server-side only).`;
+  }
+
   if (fw === "html") {
     return `${base}
 
@@ -246,7 +321,7 @@ Framework: Next.js. Prefer a Server Action that calls the API with process.env.A
 
 export function buildSingleCorrectSnippets(
   api: string
-): Record<Framework, string> {
+): Record<AddressFramework, string> {
   return {
     html: `<!-- index.html -->
 <script>
@@ -327,10 +402,56 @@ export async function correctAddress(address: string) {
   if (!json.success) throw new Error(json.error.message);
   return json.data;
 }`,
+    shopify: `{# snippets/address-correction.liquid #}
+{# Storefront — calls your App Proxy; never put x-api-key in the theme #}
+<script>
+async function correctAddress(address) {
+  const res = await fetch("/apps/addressfix/correct", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data;
+}
+
+document
+  .querySelector('[name="checkout[shipping_address][address1]"]')
+  ?.addEventListener("blur", async (e) => {
+    const input = e.target;
+    const { corrected, correctionType } = await correctAddress(input.value);
+    if (corrected !== input.value) input.value = corrected;
+    if (correctionType === "AI_CORRECTED") {
+      console.log("Address standardized:", corrected);
+    }
+  });
+</script>
+
+{# --- App Proxy handler (server) --- #}
+{# app/routes/app.proxy.correct.jsx  OR  app/api/shopify/proxy/correct/route.ts #}
+/*
+export async function POST(request) {
+  // 1. Verify Shopify App Proxy HMAC
+  // 2. Forward with server-side key:
+  const { address } = await request.json();
+  const res = await fetch("${api}/api/v1/correct", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ADDRESSFIX_API_KEY,
+    },
+    body: JSON.stringify({ address }),
+  });
+  return Response.json(await res.json());
+}
+*/`,
   };
 }
 
-export function buildBatchSnippets(api: string): Record<Framework, string> {
+export function buildBatchSnippets(
+  api: string
+): Record<AddressFramework, string> {
   return {
     html: `// Batch correction — plain JS
 async function correctBatch(addresses) {
@@ -394,12 +515,52 @@ export async function correctBatch(addresses: string[]) {
   if (!json.success) throw new Error(json.error.message);
   return json.data;
 }`,
+    shopify: `// Batch via App Proxy — e.g. bulk order import or admin tool
+async function correctBatch(addresses) {
+  const res = await fetch("/apps/addressfix/correct/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ addresses }),
+  });
+  return (await res.json()).data;
+}
+
+// orders/create webhook — correct each new order's shipping address
+export async function onOrderCreate(order) {
+  const raw = [
+    order.shipping_address?.address1,
+    order.shipping_address?.address2,
+    order.shipping_address?.city,
+    order.shipping_address?.province,
+    order.shipping_address?.zip,
+    order.shipping_address?.country,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const res = await fetch("${api}/api/v1/correct", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ADDRESSFIX_API_KEY,
+    },
+    body: JSON.stringify({ address: raw }),
+  });
+  const json = await res.json();
+  if (!json.success) return;
+
+  const { corrected, confidence } = json.data;
+  if (confidence >= 0.8 && corrected !== raw) {
+    // Update order shipping via Shopify Admin API
+    // PUT /admin/api/2024-01/orders/{order.id}.json
+  }
+}`,
   };
 }
 
 export function buildSentimentSingleSnippets(
   api: string
-): Record<Framework, string> {
+): Record<AddressFramework, string> {
   return {
     html: `<!-- index.html / browser → use a server proxy; example shows direct for curl-style clarity -->
 <script>
@@ -453,12 +614,49 @@ export async function runSentiment(review: string) {
   if (!json.success) throw new Error(json.error?.message);
   return json.data;
 }`,
+    shopify: `{# snippets/product-review-form.liquid — full template at ${api}/shopify/product-review-form.liquid #}
+<div id="af-review-form">
+  <textarea id="af-review-text" rows="4" placeholder="Write a review…"></textarea>
+  <button type="button" id="af-review-submit">Submit review</button>
+  <p id="af-review-result" hidden></p>
+</div>
+<script>
+async function submitReview(review, reviewerName) {
+  const res = await fetch("${api}/api/v1/shopify/sentiment", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shop-Domain": {{ shop.permanent_domain | json }},
+    },
+    body: JSON.stringify({
+      review,
+      reviewerName,
+      reviewerMeta: {
+        productId: String({{ product.id | json }}),
+        productHandle: {{ product.handle | json }},
+      },
+    }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data;
+}
+
+document.getElementById("af-review-submit")?.addEventListener("click", async () => {
+  const text = document.getElementById("af-review-text").value.trim();
+  if (!text) return;
+  const data = await submitReview(text, {{ customer.name | default: "Guest" | json }});
+  const el = document.getElementById("af-review-result");
+  el.hidden = false;
+  el.textContent = data.sentiment + " (" + data.confidence + "%) — net score: " + data.projectNetScore;
+});
+</script>`,
   };
 }
 
 export function buildSentimentBatchSnippets(
   api: string
-): Record<Framework, string> {
+): Record<AddressFramework, string> {
   return {
     html: `async function sentimentBatch(reviews, key) {
   const res = await fetch("${api}/api/v1/sentiment/batch", {
@@ -503,6 +701,64 @@ export async function batchSentiment(
   if (!json.success) throw new Error(json.error?.message);
   return json.data;
 }`,
+    shopify: `// Batch from storefront or embedded admin — X-Shop-Domain, no API key
+async function sentimentBatch(shop, items) {
+  const res = await fetch("${api}/api/v1/shopify/sentiment/batch", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shop-Domain": shop,
+    },
+    body: JSON.stringify({
+      reviews: items.map((r) =>
+        typeof r === "string" ? { review: r } : r
+      ),
+    }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data; // { results, projectNetScore, processingMs }
+}
+
+// Import existing Shopify reviews (server-side job after Admin API fetch)
+export async function importShopifyReviews(shop, shopifyReviews) {
+  const items = shopifyReviews.map((r) => ({
+    review: r.body,
+    reviewerName: r.author,
+  }));
+  return sentimentBatch(shop, items);
+}`,
+  };
+}
+
+export function buildReviewsShopifySnippets(api: string): {
+  list: string;
+  stats: string;
+  themeLink: string;
+} {
+  return {
+    list: `// Shopify embedded admin — server-side only (Remix loader or API route)
+export async function listReviews(limit = 20, offset = 0) {
+  const res = await fetch(
+    "${api}/api/v1/reviews?limit=" + limit + "&offset=" + offset,
+    { headers: { "x-api-key": process.env.ADDRESSFIX_API_KEY } }
+  );
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data; // { reviews, total, limit, offset }
+}`,
+    stats: `export async function reviewStats() {
+  const res = await fetch("${api}/api/v1/reviews/stats", {
+    headers: { "x-api-key": process.env.ADDRESSFIX_API_KEY },
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data; // { total, positive, negative, netScore }
+}`,
+    themeLink: `{# sections/footer-reviews.liquid — link to your public reviews page #}
+<a href="${api}/reviews/your-slug-here" class="footer-reviews-link">
+  See what customers are saying
+</a>`,
   };
 }
 
@@ -740,6 +996,51 @@ export async function shopAddToCart(
   };
 }
 
+export function buildShopifySentimentSnippets(api: string): {
+  html: string;
+  react: string;
+  nextjs: string;
+  shopify: string;
+} {
+  const single = buildSentimentSingleSnippets(api);
+  return {
+    html: `async function submitProductReview(shop, review, reviewerName) {
+  const res = await fetch("${api}/api/v1/shopify/sentiment", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shop-Domain": shop,
+    },
+    body: JSON.stringify({ review, reviewerName }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data;
+}`,
+    react: `export async function submitProductReview(
+  shop: string,
+  review: string,
+  reviewerName?: string,
+  reviewerMeta?: Record<string, unknown>
+) {
+  const res = await fetch("${api}/api/v1/shopify/sentiment", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shop-Domain": shop,
+    },
+    body: JSON.stringify({ review, reviewerName, reviewerMeta }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error?.message);
+  return json.data;
+}`,
+    nextjs: `// Theme snippet: ${api}/shopify/product-review-form.liquid
+// Storefront POST ${api}/api/v1/shopify/sentiment with X-Shop-Domain — no API key.`,
+    shopify: single.shopify,
+  };
+}
+
 export function buildReviewsSnippets(api: string): {
   list: string;
   stats: string;
@@ -778,5 +1079,184 @@ $ctx = stream_context_create([
 ]);
 $json = file_get_contents('${api}/api/v1/reviews?limit=20', false, $ctx);
 $data = json_decode($json, true)['data'];`,
+  };
+}
+
+export function getCourierPrompt(
+  fw: AddressFramework,
+  baseUrl: string = DEFAULT_API_BASE
+): string {
+  const api = normalizeBase(baseUrl);
+  const base = `Build a shipping comparison UI that calls the AddressFix Courier Compare API to recommend TCS or Leopards for Pakistan deliveries.
+
+API details:
+- Endpoint: ${api}/api/v1/courier/compare
+- Method: POST
+- Auth: x-api-key header (same project key as address and sentiment APIs)
+- Request body:
+  {
+    "fromAddress": "Saddar, Karachi",
+    "toAddress": "Model Town, Lahore",
+    "weightKg": 1,
+    "codAmount": 5000
+  }
+- fromAddress / toAddress: 3–500 chars; must resolve to a supported Pakistan city
+- weightKg: 0.1–50 (parcel weight in kg)
+- codAmount: optional PKR value; when set, COD fees are included in totals
+- Success response: { "success": true, "data": { "recommended": "tcs"|"leopards"|null, "reason", "resolved", "quotes", "dataAsOf", "disclaimer", "processingMs" } }
+- Error shape: { "success": false, "error": { "code", "message", "suggestedCities"?: string[] } }
+
+Recommendation logic (server-side):
+1. Exclude carriers that do not cover the destination
+2. For remote destinations, prefer carriers with remote zone coverage
+3. Compare total cost (base shipping + COD fee)
+4. Tie-break on COD support when codAmount > 0
+
+Requirements:
+1. API key from environment — never hardcode in client bundles for production
+2. Two address inputs (from / to), weight field, optional COD amount
+3. Show recommended carrier, human-readable reason, and side-by-side quotes for TCS and Leopards
+4. Display resolved cities, zones, and dataAsOf date
+5. Handle UNRESOLVED_CITY and AMBIGUOUS_CITY with suggestedCities when returned
+6. Handle 401, 429, 500 gracefully
+7. Note in UI that rates are approximate estimates from published tariff data`;
+
+  if (fw === "shopify") {
+    return `${base}
+
+Framework: Shopify checkout or order admin — compare couriers before fulfillment.
+
+Environment variable setup:
+- Store ADDRESSFIX_API_KEY in your Shopify app server env only.
+- App Proxy route: POST /apps/addressfix/courier/compare → ${api}/api/v1/courier/compare
+
+Use cases:
+- After checkout address collection, suggest the cheaper carrier to the merchant
+- Admin order detail panel: "Compare TCS vs Leopards" button using shipping address fields
+
+Theme/admin requirements:
+1. Never call ${api} directly from Liquid — use App Proxy only.
+2. Join shipping address fields into fromAddress/toAddress strings or pass city + street.
+3. Default weightKg from order total weight or line-item sum when available.
+4. Pass order total as codAmount when payment method is COD.`;
+  }
+
+  if (fw === "html") {
+    return `${base}
+
+Framework: Plain HTML/JS with a Node.js proxy (same pattern as address correction).`;
+  }
+  if (fw === "react") {
+    return `${base}
+
+Framework: React — prefer a backend proxy for the API key in production.`;
+  }
+  return `${base}
+
+Framework: Next.js — use a Server Action with process.env.ADDRESSFIX_API_KEY.`;
+}
+
+export function buildCourierCompareSnippets(
+  api: string
+): Record<AddressFramework, string> {
+  return {
+    html: `<!-- Browser → use a server proxy in production -->
+<script>
+async function compareCouriers(fromAddress, toAddress, weightKg, codAmount) {
+  const body = { fromAddress, toAddress, weightKg };
+  if (codAmount != null) body.codAmount = codAmount;
+
+  const res = await fetch("${api}/api/v1/courier/compare", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": "af_live_xxxxxxxxxxxx",
+    },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data;
+}
+
+compareCouriers("Karachi", "Lahore", 1, 5000)
+  .then((d) => console.log(d.recommended, d.quotes));
+</script>`,
+    react: `const API = "${api}/api/v1/courier/compare";
+
+export async function compareCouriers(
+  apiKey: string,
+  input: {
+    fromAddress: string;
+    toAddress: string;
+    weightKg: number;
+    codAmount?: number;
+  }
+) {
+  const res = await fetch(API, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify(input),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error?.message);
+  return json.data;
+}`,
+    nextjs: `// app/actions/compare-couriers.ts
+"use server";
+
+export async function compareCouriers(input: {
+  fromAddress: string;
+  toAddress: string;
+  weightKg: number;
+  codAmount?: number;
+}) {
+  const res = await fetch("${api}/api/v1/courier/compare", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ADDRESSFIX_API_KEY!,
+    },
+    body: JSON.stringify(input),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error?.message);
+  return json.data;
+}`,
+    shopify: `{# Admin or checkout extension — App Proxy only #}
+<script>
+async function compareCouriers(fromAddress, toAddress, weightKg, codAmount) {
+  const body = { fromAddress, toAddress, weightKg };
+  if (codAmount != null) body.codAmount = codAmount;
+
+  const res = await fetch("/apps/addressfix/courier/compare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.message);
+  return json.data;
+}
+</script>
+
+/*
+// App Proxy handler
+export async function POST(request) {
+  const body = await request.json();
+  const res = await fetch("${api}/api/v1/courier/compare", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ADDRESSFIX_API_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+  return Response.json(await res.json());
+}
+*/`,
   };
 }

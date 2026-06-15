@@ -7,6 +7,7 @@ import {
   buildShopifyChatSnippets,
   buildShopifyVoiceSnippets,
   buildShopifyCartSnippets,
+  buildShopifySentimentSnippets,
   buildShopifyWidgetSnippets,
   normalizeBase,
 } from "@/lib/docs-content";
@@ -36,6 +37,10 @@ export default function ShopifyApiDocsPage() {
     () => buildShopifyWidgetSnippets(apiBase),
     [apiBase]
   );
+  const sentimentSnip = useMemo(
+    () => buildShopifySentimentSnippets(apiBase),
+    [apiBase]
+  );
 
   const [fw, setFw] = useState<Framework>("html");
   const [modalOpen, setModalOpen] = useState(false);
@@ -60,7 +65,10 @@ export default function ShopifyApiDocsPage() {
               <code className="text-zinc-400">{apiBase}</code>
             </p>
             <div className="mt-8">
-              <FrameworkTabs active={fw} onChange={setFw} />
+              <FrameworkTabs
+                active={fw}
+                onChange={(f) => setFw(f as typeof fw)}
+              />
             </div>
 
             <section id="auth" className="mt-12 scroll-mt-24">
@@ -219,6 +227,45 @@ X-Shop-Domain: mystore.myshopify.com`}
                 language={fw === "html" ? "html" : "typescript"}
                 code={cartSnip[fw]}
               />
+            </section>
+
+            <section id="sentiment" className="mt-16 scroll-mt-24">
+              <div className="flex items-center gap-3">
+                <span className="rounded-md bg-violet-500/15 px-2.5 py-1 text-xs font-bold text-violet-300">
+                  POST
+                </span>
+                <h2 className="text-xl font-semibold text-white">
+                  /api/v1/shopify/sentiment
+                </h2>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed">
+                Analyze and store a product review from your Shopify theme. Uses
+                the same <code className="text-zinc-500">X-Shop-Domain</code>{" "}
+                auth as chat — no API key on the storefront. Connect the store via
+                ShopAssist install first.
+              </p>
+              <p className="mt-2 text-sm text-zinc-500">
+                Full Liquid template:{" "}
+                <code className="text-zinc-400">
+                  {apiBase}/shopify/product-review-form.liquid
+                </code>
+              </p>
+              <CodeBlock language="liquid" code={sentimentSnip.shopify} />
+              <h3 className="mt-6 text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                {fw === "html" ? "JavaScript" : fw === "react" ? "React" : "Next.js"}
+              </h3>
+              <CodeBlock
+                language={fw === "html" ? "javascript" : "typescript"}
+                code={sentimentSnip[fw]}
+              />
+              <p className="mt-4 text-sm text-zinc-500">
+                Batch import (max 50):{" "}
+                <code className="text-violet-300">
+                  POST /api/v1/shopify/sentiment/batch
+                </code>{" "}
+                with the same header and{" "}
+                <code className="text-zinc-400">{`{ "reviews": [...] }`}</code>.
+              </p>
             </section>
 
             <section id="widget-config" className="mt-16 scroll-mt-24">

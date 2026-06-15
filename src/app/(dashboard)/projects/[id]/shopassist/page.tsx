@@ -118,7 +118,10 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
       </Link>
       <h1 className="mt-4 font-display text-3xl font-semibold text-white">ShopAssist</h1>
       <ProjectSubNav projectId={id} active="shopassist" />
-      <p className="mt-4 text-sm text-zinc-500">Connect a Shopify store and configure your assistant widget.</p>
+      <p className="mt-4 text-sm text-zinc-500">
+        Connect a Shopify store for ShopAssist and product review sentiment on your
+        storefront.
+      </p>
 
       {needsReauth && (
         <div className="mt-6 rounded-lg border border-red-800 bg-red-950/40 p-4">
@@ -279,6 +282,9 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
             <p className="mt-2 text-sm text-zinc-300">Chat: {data?.usage?.chat ?? 0}</p>
             <p className="text-sm text-zinc-300">Voice: {data?.usage?.voice ?? 0}</p>
             <p className="text-sm text-zinc-300">Cart add: {data?.usage?.cart_add ?? 0}</p>
+            <p className="text-sm text-zinc-300">
+              Product reviews: {(data?.usage?.sentiment ?? 0) + (data?.usage?.sentiment_batch ?? 0)}
+            </p>
           </div>
 
           <button
