@@ -5,6 +5,8 @@ import { getAccessPayload } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { jsonError } from "@/lib/errors";
 import { projects, shopUsageLogs, shopifyStores } from "@/lib/db/schema";
+import { getShopActionQuotaStatus, getUserPlanForProject } from "@/lib/usage/quota";
+import { getShopActionLimit } from "@/lib/rate-limit/plans";
 
 export const runtime = "nodejs";
 
@@ -49,6 +51,15 @@ export async function GET(req: NextRequest, { params }: Params) {
     .where(and(eq(shopUsageLogs.projectId, params.id), gte(shopUsageLogs.createdAt, monthStart)))
     .groupBy(shopUsageLogs.actionType);
 
+  const usageMap = usage.reduce<Record<string, number>>((acc, row) => {
+    acc[row.actionType] = row.count;
+    return acc;
+  }, {});
+
+  const plan = (await getUserPlanForProject(params.id)) ?? "FREE";
+  const voiceQuota = await getShopActionQuotaStatus(params.id, "voice");
+  const chatQuota = await getShopActionQuotaStatus(params.id, "chat");
+
   return NextResponse.json({
     success: true,
     data: {
@@ -65,10 +76,26 @@ export async function GET(req: NextRequest, { params }: Params) {
             widgetGreeting: store.widgetGreeting,
           }
         : null,
-      usage: usage.reduce<Record<string, number>>((acc, row) => {
-        acc[row.actionType] = row.count;
-        return acc;
-      }, {}),
+      usage: usageMap,
+      plan,
+      quotas: {
+        voice: {
+          used: voiceQuota.used,
+          limit: voiceQuota.limit,
+          remaining: voiceQuota.remaining,
+          unlimited: voiceQuota.unlimited,
+        },
+        chat: {
+          used: chatQuota.used,
+          limit: chatQuota.limit,
+          remaining: chatQuota.remaining,
+          unlimited: chatQuota.unlimited,
+        },
+      },
+      limits: {
+        voice: getShopActionLimit(plan, "voice"),
+        chat: getShopActionLimit(plan, "chat"),
+      },
     },
   });
 }

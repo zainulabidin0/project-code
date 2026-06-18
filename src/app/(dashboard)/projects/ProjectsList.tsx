@@ -11,6 +11,10 @@ type Project = {
   name: string;
   description: string | null;
   createdAt: string;
+  reviewTotal: number;
+  reviewPositive: number;
+  reviewNegative: number;
+  reviewNetScore: number;
 };
 
 export function ProjectsList() {
@@ -139,6 +143,37 @@ export function ProjectsList() {
             <Link href={`/projects/${p.id}`} className="min-w-0 flex-1 px-4 py-3">
               <span className="font-medium text-white">{p.name}</span>
               {p.description && <p className="text-sm text-zinc-500">{p.description}</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                <span>
+                  <span className="text-zinc-400">{p.reviewTotal ?? 0}</span> reviews
+                </span>
+                <span className="text-emerald-400/90">
+                  +{p.reviewPositive ?? 0} positive
+                </span>
+                <span className="text-red-400/90">
+                  {p.reviewNegative ?? 0} negative
+                </span>
+                <span>
+                  Net{" "}
+                  <span
+                    className={
+                      (p.reviewNetScore ?? 0) >= 0
+                        ? "text-emerald-400"
+                        : "text-red-400"
+                    }
+                  >
+                    {(p.reviewNetScore ?? 0) > 0 ? "+" : ""}
+                    {p.reviewNetScore ?? 0}
+                  </span>
+                </span>
+                <Link
+                  href={`/projects/${p.id}/reviews`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-emerald-500 hover:underline"
+                >
+                  Review stats →
+                </Link>
+              </div>
             </Link>
             <button
               type="button"

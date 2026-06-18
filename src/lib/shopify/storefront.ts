@@ -6,7 +6,13 @@ import {
   buildSelectableDeliveryAddress,
 } from "@/lib/shopify/checkout-collector";
 import { getDecryptedStorefrontToken } from "@/lib/shopify/tokens";
-import type { CartLineItem, CartSummaryWithLines, SearchSortKey, ShopifyProduct } from "@/lib/shopify/types";
+import type {
+  CartLineItem,
+  CartSummary,
+  CartSummaryWithLines,
+  SearchSortKey,
+  ShopifyProduct,
+} from "@/lib/shopify/types";
 
 /** Storefront API version (tokenless requires 2024-04+). */
 const STOREFRONT_API_VERSION = "2025-10";
@@ -216,6 +222,19 @@ query CartCheckoutUrl($id: ID!) {
 }
 `;
 
+const CART_LINES_REMOVE_MUTATION = `
+mutation CartLinesRemove($cartId: ID!, $lineIds: [ID!]!) {
+  cartLinesRemove(cartId: $cartId, lineIds: $lineIds) {
+    cart {
+      id
+      checkoutUrl
+      cost { totalAmount { amount currencyCode } }
+    }
+    userErrors { field message }
+  }
+}
+`;
+
 const CART_WITH_LINES_QUERY = `
 query CartWithLines($id: ID!) {
   cart(id: $id) {
@@ -226,6 +245,7 @@ query CartWithLines($id: ID!) {
     lines(first: 20) {
       edges {
         node {
+          id
           quantity
           merchandise {
             ... on ProductVariant {
@@ -427,19 +447,20 @@ type ShopifySearchProductsResponse = {
 };
 
 function mapProducts(shopDomain: string, data: ShopifySearchProductsResponse): ShopifyProduct[] {
-  return data.products.edges.map(({ node }) => ({
+  const edges = data?.products?.edges ?? [];
+  return edges.map(({ node }) => ({
     id: node.id,
     title: node.title,
     description: node.description,
-    price: node.priceRange.minVariantPrice.amount,
-    currency: node.priceRange.minVariantPrice.currencyCode,
-    image: node.images.edges[0]?.node.url ?? null,
+    price: node.priceRange?.minVariantPrice?.amount ?? "0",
+    currency: node.priceRange?.minVariantPrice?.currencyCode ?? "",
+    image: node.images?.edges?.[0]?.node?.url ?? null,
     url: `https://${shopDomain}/products/${node.handle}`,
-    variants: node.variants.edges.map(({ node: v }) => ({
+    variants: (node.variants?.edges ?? []).map(({ node: v }) => ({
       id: v.id,
       title: v.title,
       available: v.availableForSale,
-      options: v.selectedOptions.map((o) => ({ name: o.name, value: o.value })),
+      options: (v.selectedOptions ?? []).map((o) => ({ name: o.name, value: o.value })),
     })),
   }));
 }
@@ -516,17 +537,20 @@ export async function addToCart(params: {
           cost: { totalAmount: { amount: string; currencyCode: string } };
         } | null;
         userErrors: Array<{ message: string }>;
-      };
+      } | null;
     }>(params.store, CART_LINES_ADD_MUTATION, {
       cartId: params.cartId,
       lines,
     });
-    if (data.cartLinesAdd.userErrors.length) throw new Error(data.cartLinesAdd.userErrors[0].message);
-    if (!data.cartLinesAdd.cart) throw new Error("Cart update failed");
+    const cartLinesAdd = data?.cartLinesAdd;
+    if (!cartLinesAdd) throw new Error("cartLinesAdd returned no payload");
+    const userErrors = cartLinesAdd.userErrors ?? [];
+    if (userErrors.length) throw new Error(userErrors[0]?.message ?? "Cart update failed");
+    if (!cartLinesAdd.cart) throw new Error("Cart update failed");
     return {
-      cartId: data.cartLinesAdd.cart.id,
-      checkoutUrl: data.cartLinesAdd.cart.checkoutUrl,
-      totalPrice: formatTotal(data.cartLinesAdd.cart.cost),
+      cartId: cartLinesAdd.cart.id,
+      checkoutUrl: cartLinesAdd.cart.checkoutUrl,
+      totalPrice: formatTotal(cartLinesAdd.cart.cost),
     };
   }
 
@@ -538,14 +562,17 @@ export async function addToCart(params: {
         cost: { totalAmount: { amount: string; currencyCode: string } };
       } | null;
       userErrors: Array<{ message: string }>;
-    };
+    } | null;
   }>(params.store, CART_CREATE_MUTATION, { lines });
-  if (data.cartCreate.userErrors.length) throw new Error(data.cartCreate.userErrors[0].message);
-  if (!data.cartCreate.cart) throw new Error("Cart creation failed");
+  const cartCreate = data?.cartCreate;
+  if (!cartCreate) throw new Error("cartCreate returned no payload");
+  const createErrors = cartCreate.userErrors ?? [];
+  if (createErrors.length) throw new Error(createErrors[0]?.message ?? "Cart creation failed");
+  if (!cartCreate.cart) throw new Error("Cart creation failed");
   return {
-    cartId: data.cartCreate.cart.id,
-    checkoutUrl: data.cartCreate.cart.checkoutUrl,
-    totalPrice: formatTotal(data.cartCreate.cart.cost),
+    cartId: cartCreate.cart.id,
+    checkoutUrl: cartCreate.cart.checkoutUrl,
+    totalPrice: formatTotal(cartCreate.cart.cost),
   };
 }
 
@@ -688,15 +715,24 @@ async function applyDeliveryAddressToCart(params: {
 }): Promise<DeliveryAddressMutationResult> {
   try {
     const replaceData = await storefrontFetch<{
-      cartDeliveryAddressesReplace: Omit<DeliveryAddressMutationResult, "mutation">;
+      cartDeliveryAddressesReplace: Omit<DeliveryAddressMutationResult, "mutation"> | null;
     }>(params.store, CART_DELIVERY_ADDRESSES_REPLACE_MUTATION, {
       cartId: params.cartId,
       addresses: params.addresses,
     });
+    const replacePayload = replaceData?.cartDeliveryAddressesReplace;
+    if (!replacePayload) {
+      throw new Error("cartDeliveryAddressesReplace returned no payload");
+    }
+    const replaceErrors = replacePayload.userErrors ?? [];
+    if (replaceErrors.length) {
+      throw new Error(replaceErrors[0]?.message ?? "Delivery address replace failed");
+    }
     return {
       mutation: "cartDeliveryAddressesReplace",
-      ...replaceData.cartDeliveryAddressesReplace,
-      warnings: replaceData.cartDeliveryAddressesReplace.warnings ?? [],
+      cart: replacePayload.cart ?? null,
+      userErrors: replaceErrors,
+      warnings: replacePayload.warnings ?? [],
     };
   } catch (error) {
     if (!isReplaceMutationUnavailable(error)) throw error;
@@ -704,15 +740,24 @@ async function applyDeliveryAddressToCart(params: {
   }
 
   const addData = await storefrontFetch<{
-    cartDeliveryAddressesAdd: Omit<DeliveryAddressMutationResult, "mutation">;
+    cartDeliveryAddressesAdd: Omit<DeliveryAddressMutationResult, "mutation"> | null;
   }>(params.store, CART_DELIVERY_ADDRESSES_ADD_MUTATION, {
     cartId: params.cartId,
     addresses: params.addresses,
   });
+  const addPayload = addData?.cartDeliveryAddressesAdd;
+  if (!addPayload) {
+    throw new Error("cartDeliveryAddressesAdd returned no payload");
+  }
+  const addErrors = addPayload.userErrors ?? [];
+  if (addErrors.length) {
+    throw new Error(addErrors[0]?.message ?? "Delivery address add failed");
+  }
   return {
     mutation: "cartDeliveryAddressesAdd",
-    ...addData.cartDeliveryAddressesAdd,
-    warnings: addData.cartDeliveryAddressesAdd.warnings ?? [],
+    cart: addPayload.cart ?? null,
+    userErrors: addErrors,
+    warnings: addPayload.warnings ?? [],
   };
 }
 
@@ -761,18 +806,12 @@ export async function applyCheckoutDetailsToCart(params: {
     sentAddress,
   });
 
-  if (addressResult.userErrors.length) {
-    throw new Error(
-      `Delivery address: ${addressResult.userErrors.map((e) => e.message).join("; ")}`
-    );
-  }
-
   const identityData = await storefrontFetch<{
     cartBuyerIdentityUpdate: {
       cart: CartPrefillCart | null;
       userErrors: Array<{ field?: string[]; message: string }>;
       warnings: Array<{ message: string; code?: string; target?: string }>;
-    };
+    } | null;
   }>(params.store, CART_BUYER_IDENTITY_UPDATE_MUTATION, {
     cartId: params.cartId,
     buyerIdentity: {
@@ -782,14 +821,19 @@ export async function applyCheckoutDetailsToCart(params: {
     },
   });
 
-  const identityErrors = identityData.cartBuyerIdentityUpdate.userErrors;
+  const identityPayload = identityData?.cartBuyerIdentityUpdate;
+  if (!identityPayload) {
+    throw new Error("cartBuyerIdentityUpdate returned no payload");
+  }
+
+  const identityErrors = identityPayload.userErrors ?? [];
   console.log(LOG_PREFIX, "buyer identity mutation result", {
     cartId: params.cartId,
     userErrors: identityErrors,
-    warnings: identityData.cartBuyerIdentityUpdate.warnings ?? [],
+    warnings: identityPayload.warnings ?? [],
     cartSnapshot: summarizePrefillSnapshot(
       "after-identity-mutation",
-      snapshotDeliveryAddresses(identityData.cartBuyerIdentityUpdate.cart)
+      snapshotDeliveryAddresses(identityPayload.cart)
     ),
   });
 
@@ -811,7 +855,7 @@ export async function applyCheckoutDetailsToCart(params: {
     });
   }
 
-  const cart = addressResult.cart ?? identityData.cartBuyerIdentityUpdate.cart;
+  const cart = addressResult.cart ?? identityPayload.cart;
   if (!cart?.checkoutUrl) throw new Error("Checkout URL unavailable");
 
   const prefilledCheckoutUrl = buildPrefilledCheckoutUrl(cart.checkoutUrl, params.details);
@@ -828,9 +872,8 @@ export async function applyCheckoutDetailsToCart(params: {
 export async function getCartCheckoutUrl(params: {
   store: StorefrontStore;
   cartId: string;
-}): Promise<string | null> {
-  const summary = await getCartSummary(params);
-  return summary?.checkoutUrl ?? null;
+}): Promise<{ checkoutUrl: string; totalPrice: string | null } | null> {
+  return getCartSummary(params);
 }
 
 export async function getCartSummary(params: {
@@ -842,12 +885,50 @@ export async function getCartSummary(params: {
       checkoutUrl: string;
       cost: { totalAmount: { amount: string; currencyCode: string } };
     } | null;
-  }>(params.store, CART_CHECKOUT_URL_QUERY, { id: params.cartId });
-  if (!data.cart?.checkoutUrl) return null;
+  }>(params.store, CART_CHECKOUT_URL_QUERY, { id: params.cartId }).catch((error) => {
+    console.warn(LOG_PREFIX, "getCartSummary failed", {
+      cartId: params.cartId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+
+  if (!data?.cart?.checkoutUrl) return null;
   return {
     checkoutUrl: data.cart.checkoutUrl,
     totalPrice: formatTotal(data.cart.cost),
   };
+}
+
+function mapCartLines(
+  edges: Array<{
+    node: {
+      id: string;
+      quantity: number;
+      merchandise: {
+        title?: string;
+        price?: { amount: string; currencyCode: string };
+        product?: { title: string };
+      };
+    };
+  }>
+): CartLineItem[] {
+  const lines: CartLineItem[] = [];
+  for (const { node } of edges) {
+    const merchandise = node.merchandise;
+    if (!node.id || !merchandise?.title || !merchandise.price?.amount || !merchandise.product?.title) {
+      continue;
+    }
+    lines.push({
+      id: node.id,
+      title: merchandise.product.title,
+      variantTitle: merchandise.title,
+      quantity: node.quantity,
+      price: merchandise.price.amount,
+      currency: merchandise.price.currencyCode,
+    });
+  }
+  return lines;
 }
 
 export async function getCartWithLines(params: {
@@ -861,6 +942,7 @@ export async function getCartWithLines(params: {
       lines: {
         edges: Array<{
           node: {
+            id: string;
             quantity: number;
             merchandise: {
               title?: string;
@@ -869,30 +951,69 @@ export async function getCartWithLines(params: {
             };
           };
         }>;
-      };
+      } | null;
     } | null;
-  }>(params.store, CART_WITH_LINES_QUERY, { id: params.cartId });
-
-  if (!data.cart?.checkoutUrl) return null;
-
-  const lines: CartLineItem[] = [];
-  for (const { node } of data.cart.lines.edges) {
-    const merchandise = node.merchandise;
-    if (!merchandise?.title || !merchandise.price?.amount || !merchandise.product?.title) {
-      continue;
-    }
-    lines.push({
-      title: merchandise.product.title,
-      variantTitle: merchandise.title,
-      quantity: node.quantity,
-      price: merchandise.price.amount,
-      currency: merchandise.price.currencyCode,
+  }>(params.store, CART_WITH_LINES_QUERY, { id: params.cartId }).catch((error) => {
+    console.warn(LOG_PREFIX, "getCartWithLines failed", {
+      cartId: params.cartId,
+      error: error instanceof Error ? error.message : String(error),
     });
-  }
+    return null;
+  });
+
+  if (!data?.cart?.checkoutUrl) return null;
+
+  const lines = mapCartLines(data.cart.lines?.edges ?? []);
 
   return {
     checkoutUrl: data.cart.checkoutUrl,
     totalPrice: formatTotal(data.cart.cost),
     lines,
+  };
+}
+
+export function toCartSummary(cart: CartSummaryWithLines): CartSummary {
+  const itemCount = cart.lines.reduce((sum, line) => sum + line.quantity, 0);
+  return {
+    itemCount,
+    total: cart.totalPrice,
+    checkoutUrl: cart.checkoutUrl,
+    lines: cart.lines,
+  };
+}
+
+export async function cartLinesRemove(params: {
+  store: StorefrontStore;
+  cartId: string;
+  lineIds: string[];
+}): Promise<{ cartId: string; checkoutUrl: string; totalPrice: string | null }> {
+  if (!params.lineIds.length) {
+    throw new Error("No cart lines to remove");
+  }
+
+  const data = await storefrontFetch<{
+    cartLinesRemove: {
+      cart: {
+        id: string;
+        checkoutUrl: string;
+        cost: { totalAmount: { amount: string; currencyCode: string } };
+      } | null;
+      userErrors: Array<{ message: string }>;
+    } | null;
+  }>(params.store, CART_LINES_REMOVE_MUTATION, {
+    cartId: params.cartId,
+    lineIds: params.lineIds,
+  });
+
+  const payload = data?.cartLinesRemove;
+  if (!payload) throw new Error("cartLinesRemove returned no payload");
+  const userErrors = payload.userErrors ?? [];
+  if (userErrors.length) throw new Error(userErrors[0]?.message ?? "Cart line removal failed");
+  if (!payload.cart) throw new Error("Cart line removal failed");
+
+  return {
+    cartId: payload.cart.id,
+    checkoutUrl: payload.cart.checkoutUrl,
+    totalPrice: formatTotal(payload.cart.cost),
   };
 }

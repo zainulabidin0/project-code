@@ -33,7 +33,7 @@ export async function getSavedCustomerProfile(params: {
 
 /**
  * Save or update a customer profile after a successful checkout collection.
- * Called once all 8 fields are collected (status === "complete").
+ * Called once all delivery fields are collected (status === "complete").
  * Uses upsert — creates if not exists, updates if exists.
  */
 export async function upsertCustomerProfile(params: {

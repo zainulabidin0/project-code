@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { ProjectSubNav } from "@/components/ProjectSubNav";
+import {
+  ReviewStatsPanel,
+  type ReviewStats,
+} from "@/components/reviews/ReviewStatsPanel";
+import { ReviewsTable } from "@/components/reviews/ReviewsTable";
 
 type ReviewRow = {
   id: string;
@@ -14,13 +19,13 @@ type ReviewRow = {
   createdAt: string;
 };
 
-type Stats = { total: number; positive: number; negative: number; netScore: number };
-
 type ShopStore = {
   shopDomain: string;
   isActive: boolean;
   authStatus: string;
 } | null;
+
+const PAGE_SIZE = 10;
 
 export default function ProjectReviewsPage({
   params,
@@ -31,7 +36,9 @@ export default function ProjectReviewsPage({
   const { authorizedFetch } = useAuth();
   const [rows, setRows] = useState<ReviewRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [page, setPage] = useState(0);
+  const [tableLoading, setTableLoading] = useState(true);
+  const [stats, setStats] = useState<ReviewStats | null>(null);
   const [shopStore, setShopStore] = useState<ShopStore>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -41,35 +48,47 @@ export default function ProjectReviewsPage({
       ? process.env.NEXT_PUBLIC_APP_URL || window.location.origin
       : "";
 
-  const load = useCallback(async () => {
-    setErr(null);
-    const [r1, r2, r3] = await Promise.all([
-      authorizedFetch(`/api/dashboard/projects/${id}/reviews?limit=50`),
+  const loadStats = useCallback(async () => {
+    const [r2, r3] = await Promise.all([
       authorizedFetch(`/api/dashboard/projects/${id}/reviews/stats`),
       authorizedFetch(`/api/dashboard/projects/${id}/shopassist`),
     ]);
+    if (r2.ok) {
+      const j2 = (await r2.json()) as { data: ReviewStats };
+      setStats(j2.data);
+    }
+    if (r3.ok) {
+      const j3 = (await r3.json()) as { data: { store: ShopStore } };
+      setShopStore(j3.data.store);
+    }
+  }, [authorizedFetch, id]);
+
+  const loadReviews = useCallback(async () => {
+    setTableLoading(true);
+    setErr(null);
+    const offset = page * PAGE_SIZE;
+    const r1 = await authorizedFetch(
+      `/api/dashboard/projects/${id}/reviews?limit=${PAGE_SIZE}&offset=${offset}`
+    );
     if (r1.ok) {
-      const j = (await r1.json()) as { data: { reviews: ReviewRow[]; total: number } };
+      const j = (await r1.json()) as {
+        data: { reviews: ReviewRow[]; total: number };
+      };
       setRows(j.data.reviews);
       setTotal(j.data.total);
     } else {
       setErr("Could not load reviews");
     }
-    if (r2.ok) {
-      const j2 = (await r2.json()) as { data: Stats };
-      setStats(j2.data);
-    }
-    if (r3.ok) {
-      const j3 = (await r3.json()) as {
-        data: { store: ShopStore };
-      };
-      setShopStore(j3.data.store);
-    }
-  }, [authorizedFetch, id]);
+    setTableLoading(false);
+  }, [authorizedFetch, id, page]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadStats();
+  }, [loadStats]);
+
+  useEffect(() => {
+    void loadReviews();
+  }, [loadReviews]);
 
   const shopConnected =
     Boolean(shopStore?.isActive) && shopStore?.authStatus !== "REAUTH_REQUIRED";
@@ -99,25 +118,33 @@ Header: X-Shop-Domain: ${shop}`;
       <Link href={`/projects/${id}`} className="text-sm text-zinc-500 hover:text-white">
         ← Project
       </Link>
-      <h1 className="mt-4 font-display text-3xl font-semibold text-white">Reviews</h1>
+      <h1 className="mt-4 font-display text-3xl font-semibold text-white">
+        Review stats
+      </h1>
       <ProjectSubNav projectId={id} active="reviews" />
-      {stats && (
-        <div className="mt-4 flex flex-wrap gap-4 text-sm text-zinc-300">
-          <span>
-            Net: <span className="font-mono text-emerald-400">{stats.netScore}</span>
-          </span>
-          <span>Total: {stats.total}</span>
-          <span>Positive: {stats.positive}</span>
-          <span>Negative: {stats.negative}</span>
-        </div>
-      )}
       <p className="mt-2 text-sm text-zinc-500">
-        {total} stored review{total === 1 ? "" : "s"}. For API access use{" "}
-        <code className="text-zinc-400">GET /api/v1/reviews</code> with your project API key.
+        Sentiment overview for this project. For API access use{" "}
+        <code className="text-zinc-400">GET /api/v1/reviews/stats</code> with your
+        project API key.
       </p>
       {err && <p className="mt-2 text-sm text-amber-400">{err}</p>}
 
-      <section className="mt-8 rounded-lg border border-zinc-800 p-4">
+      {stats ? (
+        <ReviewStatsPanel stats={stats} />
+      ) : (
+        <p className="mt-6 text-sm text-zinc-500">Loading stats…</p>
+      )}
+
+      <ReviewsTable
+        rows={rows}
+        total={total}
+        page={page}
+        pageSize={PAGE_SIZE}
+        loading={tableLoading}
+        onPageChange={setPage}
+      />
+
+      <section className="mt-10 rounded-lg border border-zinc-800 p-4">
         <h2 className="text-lg font-medium text-white">Shopify product reviews</h2>
         <p className="mt-2 text-sm text-zinc-500">
           When a customer submits a review on your Shopify product page, it is analyzed
@@ -179,21 +206,7 @@ Header: X-Shop-Domain: ${shop}`;
         )}
       </section>
 
-      <ul className="mt-8 space-y-2">
-        {rows.map((r) => (
-          <li
-            key={r.id}
-            className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-sm text-zinc-200"
-          >
-            <p className="whitespace-pre-wrap">{r.reviewText}</p>
-            <p className="mt-1 text-xs text-zinc-500">
-              {r.sentiment} · {r.confidence != null ? `${r.confidence}% · ` : null}
-              {r.id}
-            </p>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-4 text-sm">
+      <p className="mt-6 text-sm">
         <Link
           href={`/projects/${id}/reviews/settings`}
           className="text-emerald-500 hover:underline"

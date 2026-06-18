@@ -55,6 +55,14 @@
     var style = document.createElement("style");
     style.id = "af-responsive-css";
     style.textContent =
+      "#af-panel .af-msg.user{text-align:right;display:flex;justify-content:flex-end;margin:6px 0}" +
+      "#af-panel .af-msg.user .message-text{background:#f0f0f0;border-radius:12px 12px 4px 12px;padding:8px 12px;max-width:85%;display:inline-block;text-align:left}" +
+      "#af-panel .af-msg.assistant{text-align:left;display:flex;justify-content:flex-start;margin:6px 0}" +
+      "#af-panel .af-msg.assistant .message-text{background:#f9f9f9;border-radius:12px 12px 12px 4px;padding:8px 12px;max-width:85%;display:inline-block}" +
+      "#af-voice-modal .af-msg.user{text-align:right;display:flex;justify-content:flex-end;margin:6px 0}" +
+      "#af-voice-modal .af-msg.user .message-text{background:#f0f0f0;border-radius:12px 12px 4px 12px;padding:8px 12px;max-width:85%;display:inline-block;text-align:left}" +
+      "#af-voice-modal .af-msg.assistant{text-align:left;display:flex;justify-content:flex-start;margin:6px 0}" +
+      "#af-voice-modal .af-msg.assistant .message-text{background:#f9f9f9;border-radius:12px 12px 12px 4px;padding:8px 12px;max-width:85%;display:inline-block}" +
       "#af-panel .af-list,#af-voice-modal .af-list{overflow-x:hidden;flex:1}" +
       "#af-panel .af-products,#af-voice-modal .af-products{width:100%;max-width:100%;box-sizing:border-box}" +
       "#af-panel .af-prod,#af-voice-modal .af-prod{display:flex;flex-direction:column;width:100%;max-width:100%;box-sizing:border-box;overflow:hidden}" +
@@ -87,10 +95,118 @@
   }
 
   function appendMsg(container, who, text) {
-    var m = el("div", "af-msg " + who, text);
+    var last = container.querySelector(".af-msg:last-child");
+    if (
+      last &&
+      last.classList.contains(who) &&
+      last.querySelector(".message-text") &&
+      last.querySelector(".message-text").textContent === text
+    ) {
+      return null;
+    }
+    var m = el("div", "af-msg " + who);
+    var span = el("span", "message-text", text);
+    m.appendChild(span);
     container.appendChild(m);
     container.scrollTop = container.scrollHeight;
     return m;
+  }
+
+  function clearProductCards(container) {
+    var existing = container.querySelectorAll(".af-products");
+    existing.forEach(function (node) {
+      node.remove();
+    });
+  }
+
+  function hideCheckoutButton(container) {
+    var existing = container.querySelectorAll(".af-checkout-btn");
+    existing.forEach(function (node) {
+      node.remove();
+    });
+  }
+
+  function showCheckoutButton(container, checkoutUrl, totalPrice, accent) {
+    hideCheckoutButton(container);
+    var a = document.createElement("a");
+    a.id = "af-checkout-btn";
+    a.className = "af-checkout-btn";
+    a.href = checkoutUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.innerHTML =
+      "<span>Complete Order →</span>" +
+      (totalPrice ? "<small> " + totalPrice + "</small>" : "");
+    a.style.cssText =
+      "display:block;background:" +
+      (accent || "#000") +
+      ";color:#fff;text-align:center;padding:14px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;margin:12px 8px 4px;cursor:pointer;";
+    container.appendChild(a);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function handleChatResponse(container, json, accent, options) {
+    options = options || {};
+    if (!json.success) {
+      clearProductCards(container);
+      hideCheckoutButton(container);
+      var errMsg =
+        (json.data && json.data.message) ||
+        json.message ||
+        "Something went wrong. Please try again.";
+      appendAssistantMessage(container, errMsg);
+      return null;
+    }
+
+    var data = json.data || {};
+    clearProductCards(container);
+    hideCheckoutButton(container);
+
+    if (data.message) {
+      appendAssistantMessage(container, data.message);
+    }
+
+    if (data.products && data.products.length) {
+      renderProducts(container, data.products, accent, null, data.checkoutReady ? "checkout_ready" : null);
+    }
+
+    if (data.productSuggestions && data.productSuggestions.length) {
+      renderSuggestionChips(
+        container,
+        data.productSuggestions,
+        accent,
+        options.sendHandler,
+        "af-product-suggestions"
+      );
+    }
+
+    if (data.needsClarification && data.suggestions) {
+      renderClarificationSuggestions(container, data.suggestions, accent, options.sendHandler);
+    }
+
+    var checkoutUrl =
+      data.checkoutUrl || (data.cartAction && data.cartAction.checkoutUrl) || null;
+    var checkoutTotal =
+      (data.cartAction && data.cartAction.totalPrice) || null;
+
+    if (data.redirectToCheckout && checkoutUrl) {
+      window.open(checkoutUrl, "_blank", "noopener,noreferrer");
+    } else if (data.checkoutReady && checkoutUrl) {
+      showCheckoutButton(container, checkoutUrl, checkoutTotal, accent);
+    }
+
+    return data.message || "";
+  }
+
+  function getLastAssistantMessageText(container) {
+    var nodes = container.querySelectorAll(".af-msg.assistant .message-text");
+    if (!nodes.length) return null;
+    return nodes[nodes.length - 1].textContent;
+  }
+
+  function appendAssistantMessage(container, text) {
+    if (getLastAssistantMessageText(container) === text) return null;
+    return appendMsg(container, "assistant", text);
   }
 
   function renderVariantPicker(product) {
@@ -225,6 +341,10 @@
 
   function renderProducts(container, products, accent, selectedProductId, conversationStage) {
     if (!products || !products.length) return;
+    var lastChild = container.lastElementChild;
+    if (lastChild && lastChild.classList && lastChild.classList.contains("af-products")) {
+      return;
+    }
     var hideAddToCart =
       conversationStage === "collecting_checkout" ||
       conversationStage === "checkout_ready" ||
@@ -502,9 +622,15 @@
       }
     }
 
-    async function onSend(prefilledText) {
+    var isSending = false;
+
+    async function sendMessage(prefilledText) {
       var text = (prefilledText || input.value || "").trim();
-      if (!text) return;
+      if (!text || isSending) return;
+      isSending = true;
+      send.disabled = true;
+      input.disabled = true;
+
       input.value = "";
       hideCenterMic();
       appendMsg(list, "user", text);
@@ -524,47 +650,32 @@
         });
         var json = await res.json();
         typing.remove();
-        var msg = (json.data && json.data.message) || "Unable to reply.";
-        appendMsg(list, "assistant", msg);
-        if (json.data && json.data.products && json.data.products.length) {
-          var selectedId =
-            json.data.selectedProduct && json.data.selectedProduct.id
-              ? json.data.selectedProduct.id
-              : null;
-          renderProducts(list, json.data.products, accent, selectedId, json.data.conversationStage);
-        }
-        if (json.data && json.data.productSuggestions && json.data.productSuggestions.length) {
-          renderSuggestionChips(list, json.data.productSuggestions, accent, onSend, "af-product-suggestions");
-        }
-        if (json.data && json.data.needsClarification && json.data.suggestions) {
-          renderClarificationSuggestions(list, json.data.suggestions, accent, onSend);
-        }
-        if (json.data && json.data.checkoutReady && json.data.cartAction && json.data.cartAction.checkoutUrl) {
-          var a = document.createElement("a");
-          a.href = json.data.cartAction.checkoutUrl;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
-          a.textContent = "Complete order →";
-          a.style.display = "inline-block";
-          a.style.marginTop = "8px";
-          a.style.color = accent;
-          list.appendChild(a);
-          list.scrollTop = list.scrollHeight;
-        }
-        if (chatState.voiceReplyMode) {
+        var replyText = handleChatResponse(list, json, accent, { sendHandler: sendMessage });
+        if (chatState.voiceReplyMode && replyText) {
           chatState.voiceReplyMode = false;
-          await playGroqSpeech(msg);
+          await playGroqSpeech(replyText);
         }
       } catch (e) {
         typing.remove();
         chatState.voiceReplyMode = false;
-        appendMsg(list, "assistant", "Connection error. Try again.");
+        clearProductCards(list);
+        hideCheckoutButton(list);
+        appendAssistantMessage(list, "Connection error. Try again.");
+      } finally {
+        isSending = false;
+        send.disabled = false;
+        input.disabled = false;
       }
     }
 
-    send.addEventListener("click", onSend);
+    send.addEventListener("click", function () {
+      sendMessage();
+    });
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") onSend();
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
     });
 
     function setMicRecordingUi(active) {
@@ -622,7 +733,7 @@
               if (j.success && j.data && j.data.transcript) {
                 input.value = j.data.transcript;
                 chatState.voiceReplyMode = true;
-                await onSend();
+                await sendMessage();
               } else {
                 appendMsg(list, "assistant", "Could not transcribe audio.");
               }

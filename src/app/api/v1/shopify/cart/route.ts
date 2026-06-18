@@ -7,7 +7,6 @@ import { shopChatSessions } from "@/lib/db/schema";
 import { getActiveStoreByDomain } from "@/lib/shopify/store";
 import { getOrCreateSession, parseSessionContext, saveSessionContext } from "@/lib/shopify/session";
 import { addToCart, type StorefrontStore } from "@/lib/shopify/storefront";
-import { buildSessionAfterCartAdd } from "@/lib/shopify/checkout-collector";
 
 export const runtime = "nodejs";
 
@@ -54,30 +53,29 @@ export async function POST(req: NextRequest) {
     cartId: session.cartToken,
   });
 
-  const afterAdd = buildSessionAfterCartAdd({
-    sessionContext: {
-      ...sessionContext,
-      selectedVariantId: parsed.data.variantId,
-      selectedQuantity: parsed.data.quantity,
-    },
-    cart: { cartId: cart.cartId, totalPrice: cart.totalPrice },
-    variantId: parsed.data.variantId,
-    quantity: parsed.data.quantity,
-  });
-
   await db
     .update(shopChatSessions)
     .set({ cartToken: cart.cartId })
     .where(eq(shopChatSessions.id, session.id));
-  await saveSessionContext(session.id, afterAdd.sessionContext);
+
+  await saveSessionContext(session.id, {
+    ...sessionContext,
+    cartAction: {
+      checkoutUrl: cart.checkoutUrl,
+      totalPrice: cart.totalPrice,
+    },
+    checkoutReady: false,
+  });
+
+  const totalLine = cart.totalPrice ? ` Cart total: ${cart.totalPrice}` : "";
 
   return NextResponse.json({
     success: true,
     data: {
       cartId: cart.cartId,
       totalPrice: cart.totalPrice,
-      message: afterAdd.introMessage,
-      conversationStage: afterAdd.sessionContext.stage,
+      checkoutUrl: cart.checkoutUrl,
+      message: `Added to your cart!${totalLine}`,
       checkoutReady: false,
     },
   });

@@ -1,526 +1,822 @@
+import {
+  getGroqKey,
+  groqChatCompletionWithTools,
+  GROQ_CHAT_MODEL,
+  type GroqChatMessageWithTools,
+  type GroqChatTool,
+} from "@/lib/groq/client";
+import {
+  buildSavedAddressSummary,
+  createInitialCheckoutDraft,
+  normalizeProvinceCode,
+  parseCheckoutAnswer,
+  type CheckoutField,
+} from "@/lib/shopify/checkout-collector";
+import { buildCheckoutUrl, getMissingFields } from "@/lib/shopify/checkout-url-builder";
+import { getSavedCustomerProfile, upsertCustomerProfile } from "@/lib/shopify/customer-profile";
+import { normalizeEmailInput } from "@/lib/shopify/email-normalizer";
+import { normalizeFullNameInput } from "@/lib/shopify/name-normalizer";
+import {
+  addToCart,
+  cartLinesRemove,
+  getCartCheckoutUrl,
+  getCartWithLines,
+  searchProducts,
+  toCartSummary,
+} from "@/lib/shopify/storefront";
 import type {
-  CartLineItem,
-  ChatSessionContext,
-  ConversationStage,
+  AgentContext,
+  CartAction,
+  CartSummary,
+  SearchSortKey,
   SessionMessage,
   ShopifyProduct,
 } from "@/lib/shopify/types";
-import { parseAgentResponse } from "@/lib/shopify/intent-parser";
-import { getGroqKey, groqChatCompletion, GROQ_CHAT_MODEL } from "@/lib/groq/client";
-import {
-  buildCheckoutReadyMessage,
-  buildSavedAddressSummary,
-  buildCheckoutStartMessage,
-  buildEmptyCartCheckoutMessage,
-} from "@/lib/shopify/checkout-collector";
 
-function buildNoResultsMessage(storeName: string, searchedQuery?: string | null): string {
-  const item = searchedQuery?.trim();
-  if (item) {
-    return `I checked ${storeName} and we don't sell "${item}". Would you like me to show you some popular items from our store instead?`;
-  }
-  return `I checked ${storeName} and we don't have that item. Would you like me to show you some popular items from our store instead?`;
-}
+export type { AgentContext };
 
-function formatProductLine(product: ShopifyProduct): string {
-  const price = product.price ? `${product.currency ? product.currency + " " : ""}${product.price}`.trim() : "";
-  return price ? `${product.title} (${price})` : product.title;
-}
+export const FALLBACK_REPLY = "Sorry, I couldn't complete that. Please try again.";
 
-function buildSystemPrompt(
-  storeName: string,
-  opts: {
-    routingIntent?: string;
-    cartHint?: string;
-    resultMode?:
-      | "success"
-      | "clarification"
-      | "partial"
-      | "no_results"
-      | "multi_results"
-      | "greeting"
-      | "confirm_offer"
-      | "cart_added"
-      | "cart_added_pause"
-      | "show_cart"
-      | "variant_selection"
-      | "awaiting_quantity"
-      | "awaiting_cart_confirm"
-      | "confirming_saved_address"
-      | "collecting_checkout"
-      | "checkout_ready";
-    clarificationQuestion?: string;
-    suggestions?: string[];
-    searchedQuery?: string | null;
-    conversationStage?: ConversationStage;
-    selectedProduct?: ShopifyProduct;
-    selectedQuantity?: number;
-    checkoutDraftSummary?: string;
-  }
-): string {
-  let rules = `You are a friendly in-store sales assistant for ${storeName}.
-Respond with strict JSON:
-{
-  "intent": "product_search|add_to_cart|show_cart|start_checkout|chitchat",
-  "message": "assistant response for the shopper",
-  "query": "optional search query",
-  "variantId": "optional variant id for add_to_cart"
-}
-Rules:
-- Act like a helpful salesperson: warm, natural, concise (1-3 sentences).
-- Stay focused on store shopping help only.
-- Never say you are searching, looking, or fetching — results are already available.
-- Match user language where possible.`;
+const FORCE_TOOL_USE_PREFIX = `IMPORTANT: You MUST respond by calling a tool.
+Do not write any text response. Call the most appropriate tool now based on
+the user's message. If unsure, call search_products.`;
 
-  if (opts.routingIntent === "off_topic") {
-    rules +=
-      "\n- The shopper may be off-topic; politely redirect them to shopping at this store only.";
-  }
-  if (opts.cartHint) {
-    rules += `\n- ${opts.cartHint}`;
-  }
-  if (opts.resultMode === "greeting" || opts.conversationStage === "greeting") {
-    rules +=
-      '\n- Welcome the shopper warmly and ask: "What would you like to buy today?"';
-  }
-  if (opts.resultMode === "clarification") {
-    rules +=
-      "\n- Execution needs clarification. Ask one short question using ONLY the server-provided suggestions below. Do NOT invent product names or categories.";
-  }
-  if (opts.resultMode === "multi_results") {
-    rules +=
-      "\n- Multiple products were found. In one natural reply, say how many options you have, briefly list each by name and price, then ask which one they would like.";
-  }
-  if (opts.resultMode === "success" && opts.selectedProduct) {
-    rules += `\n- One product matched: ${formatProductLine(opts.selectedProduct)}. Present it and ask if they would like it added to their cart.`;
-  }
-  if (opts.resultMode === "confirm_offer" && opts.selectedProduct) {
-    const qty = opts.selectedQuantity && opts.selectedQuantity > 1 ? `${opts.selectedQuantity} × ` : "";
-    rules += `\n- The shopper chose: ${qty}${formatProductLine(opts.selectedProduct)}. Confirm their choice and ask: "Shall I add it to your cart?"`;
-  }
-  if (opts.resultMode === "cart_added") {
-    rules +=
-      "\n- The item was successfully added to cart. Confirm this warmly. Do NOT share a checkout link — delivery details will be collected next.";
-  }
-  if (opts.resultMode === "show_cart") {
-    rules +=
-      "\n- You are showing the shopper their current cart contents. List each item with quantity and price clearly. End by asking if they want to checkout or continue shopping.";
-  }
-  if (opts.resultMode === "variant_selection" && opts.selectedProduct) {
-    rules += `\n- The shopper picked ${opts.selectedProduct.title}. List the available sizes/options and ask which one they want. Be brief.`;
-  }
-  if (opts.resultMode === "awaiting_quantity") {
-    rules += "\n- The shopper has chosen their product and variant. Ask simply: 'How many would you like?'";
-  }
-  if (opts.resultMode === "awaiting_cart_confirm" && opts.selectedProduct) {
-    const qty = opts.selectedQuantity ?? 1;
-    const item = opts.selectedProduct.title;
-    rules += `\n- Confirm the order: ${qty}× ${item}. Show the per-unit price and total. Ask: 'Shall I add this to your cart?'`;
-  }
-  if (opts.resultMode === "cart_added_pause") {
-    rules +=
-      "\n- The item was successfully added to cart. Confirm briefly and ask: 'Would you like to checkout?' Do NOT start asking for delivery details yet.";
-  }
-  if (opts.resultMode === "confirming_saved_address") {
-    rules +=
-      "\n- You are showing the shopper their previously saved delivery address and asking if they want to use it. Be warm and brief. Say 'Shall I use this address?' or similar.";
-  }
-  if (opts.resultMode === "collecting_checkout") {
-    rules +=
-      "\n- You are collecting checkout delivery details one question at a time. Ask ONLY the next required question. Do not share a checkout link yet.";
-  }
-  if (opts.resultMode === "checkout_ready") {
-    rules +=
-      "\n- All delivery details are saved. Tell the shopper to tap Complete order to finish on the secure checkout page. Do NOT paste a raw URL.";
-    if (opts.checkoutDraftSummary) {
-      rules +=
-        "\n- If the shopper asks about their name, phone, email, or address, answer using ONLY the saved delivery details below. Never say you do not have information that is listed there.";
-    }
-  }
-  if (
-    (opts.resultMode === "confirming_saved_address" || opts.resultMode === "collecting_checkout") &&
-    opts.checkoutDraftSummary
-  ) {
-    rules +=
-      "\n- If the shopper asks about their saved delivery details, answer using ONLY the saved delivery details below.";
-  }
-  if (opts.checkoutDraftSummary) {
-    rules += `\n- Saved delivery details:\n${opts.checkoutDraftSummary}`;
-  }
-  if (opts.resultMode === "no_results") {
-    const searched = opts.searchedQuery?.trim();
-    rules +=
-      "\n- The product search has ALREADY finished. The Product context array is empty — no matching items exist in this store's catalog.";
-    rules +=
-      "\n- Do NOT say you are searching, looking, checking, or fetching. The search is complete.";
-    rules +=
-      "\n- Clearly tell the shopper we could not find that item and we do not sell it.";
-    if (searched) {
-      rules += `\n- The shopper searched for: "${searched}". Reference this naturally in your reply.`;
-    }
-    rules +=
-      "\n- Do NOT invent product types or subcategories (e.g. do not mention beeswax, candle wax, etc. unless they appear in Product context).";
-    rules +=
-      '\n- End by asking if they would like to see popular items from the store (they can reply "yes" or "show me what you have").';
-  }
-  if (opts.clarificationQuestion) {
-    rules += `\n- Clarification question to ask: ${opts.clarificationQuestion}`;
-  }
-  if (opts.suggestions?.length) {
-    rules += `\n- Suggest these options: ${opts.suggestions.join(" | ")}`;
-  }
-  return rules;
-}
+const MAX_ITERATIONS = 6;
 
-export async function runAgent(params: {
-  storeName: string;
+const EMPTY_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as const;
+
+export type AgentLoopInput = {
   userMessage: string;
   history: SessionMessage[];
+  context: AgentContext;
+  storeName: string;
+  maxIterations?: number;
+};
+
+export type AgentLoopOutput = {
+  reply: string;
+  updatedContext: AgentContext;
+  toolsUsed: string[];
   products: ShopifyProduct[];
-  cartAction?: { checkoutUrl?: string; totalPrice?: string | null; cartId?: string } | null;
-  routingIntent?: string;
-  resultMode?:
-    | "success"
-    | "clarification"
-    | "partial"
-    | "no_results"
-    | "multi_results"
-    | "greeting"
-    | "confirm_offer"
-    | "cart_added"
-    | "cart_added_pause"
-    | "show_cart"
-    | "variant_selection"
-    | "awaiting_quantity"
-    | "awaiting_cart_confirm"
-    | "confirming_saved_address"
-    | "collecting_checkout"
-    | "checkout_ready";
-  clarification?: { question: string; suggestions: string[] };
-  searchedQuery?: string | null;
-  conversationStage?: ConversationStage;
-  selectedProduct?: ShopifyProduct;
-  sessionContext?: ChatSessionContext;
-  selectedQuantity?: number;
-  cartLines?: CartLineItem[];
-}) {
-  if (
-    params.resultMode === "no_results" ||
-    (params.routingIntent === "product_search" &&
-      params.products.length === 0 &&
-      params.resultMode !== "clarification" &&
-      params.resultMode !== "greeting")
-  ) {
-    if (!getGroqKey()) {
-      return parseAgentResponse(
-        JSON.stringify({
-          intent: "product_search",
-          message: buildNoResultsMessage(params.storeName, params.searchedQuery),
-        })
-      );
-    }
-  }
+  checkoutReady: boolean;
+  cartAction: CartAction | null;
+};
 
-  if (params.resultMode === "greeting" && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "chitchat",
-        message: `Welcome to ${params.storeName}! What would you like to buy today?`,
-      })
-    );
-  }
-
-  if (params.resultMode === "confirm_offer" && params.selectedProduct && !getGroqKey()) {
-    const line = formatProductLine(params.selectedProduct);
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "product_search",
-        message: `Great choice — ${line}. Shall I add it to your cart?`,
-      })
-    );
-  }
-
-  if (params.resultMode === "cart_added" && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "add_to_cart",
-        message: `Done! I've added it to your cart. I'll ask a few quick delivery questions next.`,
-      })
-    );
-  }
-
-  if (params.resultMode === "collecting_checkout" && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "chitchat",
-        message: "What's your full name?",
-      })
-    );
-  }
-
-  if (params.resultMode === "checkout_ready" && params.cartAction?.checkoutUrl && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "start_checkout",
-        message: "Thanks! Tap Complete order below to finish checkout.",
-      })
-    );
-  }
-
-  if (params.resultMode === "show_cart" && !getGroqKey()) {
-    const lines = params.cartLines ?? [];
-    const list = lines.length
-      ? lines
-          .map(
-            (l) =>
-              `${l.quantity}× ${l.title}${l.variantTitle !== "Default Title" ? ` (${l.variantTitle})` : ""} — ${l.currency} ${l.price}`
-          )
-          .join("\n")
-      : "Your cart is empty.";
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "show_cart",
-        message: `Here's your cart:\n${list}${params.cartAction?.totalPrice ? `\n\nTotal: ${params.cartAction.totalPrice}` : ""}`,
-      })
-    );
-  }
-
-  if (params.resultMode === "variant_selection" && params.selectedProduct && !getGroqKey()) {
-    const options = params.selectedProduct.variants
-      .filter((v) => v.available)
-      .map((v) => v.title)
-      .join(", ");
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "select_product",
-        message: `${params.selectedProduct.title} is available in: ${options}. Which would you like?`,
-      })
-    );
-  }
-
-  if (params.resultMode === "awaiting_quantity" && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "select_product",
-        message: "How many would you like?",
-      })
-    );
-  }
-
-  if (params.resultMode === "awaiting_cart_confirm" && params.selectedProduct && !getGroqKey()) {
-    const qty = params.selectedQuantity ?? 1;
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "confirm_add_to_cart",
-        message: `${qty}× ${params.selectedProduct.title} — shall I add this to your cart?`,
-      })
-    );
-  }
-
-  if (params.resultMode === "cart_added_pause" && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "add_to_cart",
-        message: "Done! Added to your cart. Would you like to checkout?",
-      })
-    );
-  }
-
-  if (params.resultMode === "confirming_saved_address" && !getGroqKey()) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "start_checkout",
-        message: "I have your saved address. Shall I use it for this order?",
-      })
-    );
-  }
-
-  if (!getGroqKey()) {
-    if (params.products.length > 1) {
-      const list = params.products.map(formatProductLine).join(", ");
-      return parseAgentResponse(
-        JSON.stringify({
-          intent: "product_search",
-          message: `We have ${params.products.length} options: ${list}. Which one would you like?`,
-        })
-      );
-    }
-    if (params.products.length > 0) {
-      return parseAgentResponse(
-        JSON.stringify({
-          intent: "product_search",
-          message:
-            "Here are some products that match. Use Add to cart on a variant, or tell me which one you'd like.",
-        })
-      );
-    }
-    if (params.cartAction?.checkoutUrl) {
-      return parseAgentResponse(
-        JSON.stringify({
-          intent: "add_to_cart",
-          message: `Your cart was updated. You can continue to checkout here: ${params.cartAction.checkoutUrl}`,
-        })
-      );
-    }
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "chitchat",
-        message:
-          "Shop assistant is not fully configured (missing GROQ_API_KEY). Add a key for natural replies.",
-      })
-    );
-  }
-
-  const cartHint = params.cartAction
-    ? `Latest cart: total ${params.cartAction.totalPrice ?? "n/a"}, checkout URL: ${params.cartAction.checkoutUrl}`
-    : "";
-  const checkoutDraftSummary = params.sessionContext?.checkoutDraft
-    ? buildSavedAddressSummary(params.sessionContext.checkoutDraft)
-    : undefined;
-
-  const messages = [
-    {
-      role: "system",
-      content: buildSystemPrompt(params.storeName, {
-        routingIntent: params.routingIntent,
-        cartHint,
-        resultMode: params.resultMode,
-        clarificationQuestion: params.clarification?.question,
-        suggestions: params.clarification?.suggestions,
-        searchedQuery: params.searchedQuery,
-        conversationStage: params.conversationStage,
-        selectedProduct: params.selectedProduct,
-        selectedQuantity: params.sessionContext?.selectedQuantity,
-        checkoutDraftSummary,
-      }),
+const TOOLS: GroqChatTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "search_products",
+      description:
+        "Search the store catalog. Call whenever the customer mentions any product, category, or item they want. Also call to browse alternatives when no results found.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search terms e.g. 'wireless charger', 'blue running shoes'",
+          },
+          sort: {
+            type: "string",
+            enum: ["RELEVANCE", "PRICE_ASC", "PRICE_DESC", "BEST_SELLING", "CREATED_AT_DESC"],
+            description:
+              "PRICE_ASC=cheapest first, BEST_SELLING=popular, CREATED_AT_DESC=newest",
+          },
+        },
+        required: ["query"],
+      },
     },
-    ...params.history.map((m) => ({ role: m.role, content: m.content })),
-    {
-      role: "user",
-      content: `${params.userMessage}\n\nProduct context:\n${JSON.stringify(params.products).slice(0, 3000)}${
-        params.cartLines?.length
-          ? `\n\nCart lines:\n${JSON.stringify(params.cartLines).slice(0, 2000)}`
-          : ""
-      }${
-        checkoutDraftSummary
-          ? `\n\nSaved delivery details:\n${checkoutDraftSummary}`
-          : ""
-      }`,
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_to_cart",
+      description:
+        "Add a product to cart. Call after customer confirms they want a product OR when they say 'sure', 'yes', 'add it', 'okay'. Pick the best matching variant automatically. If multiple very different variants exist (like S/M/L/XL) and customer hasn't specified, ask first.",
+      parameters: {
+        type: "object",
+        properties: {
+          variantId: { type: "string", description: "Shopify variant GID" },
+          quantity: { type: "number", description: "How many to add. Default 1." },
+          productTitle: { type: "string", description: "Product name for confirmation" },
+          price: { type: "string", description: "Unit price for display" },
+        },
+        required: ["variantId", "quantity", "productTitle", "price"],
+      },
     },
-  ];
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cart",
+      description:
+        "Get current cart contents and total. Call when customer asks about cart or before starting checkout.",
+      parameters: { ...EMPTY_TOOL_PARAMETERS, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "clear_cart",
+      description:
+        "Remove ALL items from cart. Call when customer says 'clear cart', 'empty cart', 'delete everything', 'start over', 'remove all'.",
+      parameters: { ...EMPTY_TOOL_PARAMETERS, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remove_cart_item",
+      description: "Remove a specific item from cart.",
+      parameters: {
+        type: "object",
+        properties: {
+          lineId: { type: "string", description: "Cart line item GID to remove" },
+          productTitle: { type: "string", description: "Product name for confirmation" },
+        },
+        required: ["lineId", "productTitle"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_checkout_info",
+      description:
+        "Save checkout details the customer provides. Call as soon as the customer gives any piece of info (name, email, phone, address etc). Call once per field, immediately when the customer provides it.",
+      parameters: {
+        type: "object",
+        properties: {
+          field: {
+            type: "string",
+            enum: ["fullName", "email", "phone", "address1", "address2", "city", "province", "zip"],
+          },
+          value: { type: "string" },
+        },
+        required: ["field", "value"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lookup_saved_address",
+      description:
+        "Check if customer has a saved delivery address. Call this after saving their email.",
+      parameters: {
+        type: "object",
+        properties: { email: { type: "string" } },
+        required: ["email"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "apply_saved_address",
+      description:
+        "Apply the customer's previously saved address to the cart. Call when customer says yes to using saved address.",
+      parameters: {
+        type: "object",
+        properties: { email: { type: "string" } },
+        required: ["email"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "build_checkout_url",
+      description: `Build the final prefilled checkout URL and mark order as ready.
+      Call this ONLY when you have collected ALL required fields:
+      fullName, email, phone, address1, city, zip.
+      address2 is optional. province is auto-inferred from city for Pakistan.`,
+      parameters: { ...EMPTY_TOOL_PARAMETERS, required: [] },
+    },
+  },
+];
 
-  const result = await groqChatCompletion({
-    model: GROQ_CHAT_MODEL,
-    messages,
-    max_tokens: 500,
-    response_format: { type: "json_object" },
+function mapToolSort(sort?: string): { sortKey: SearchSortKey; reverse: boolean } {
+  switch (sort) {
+    case "PRICE_ASC":
+      return { sortKey: "PRICE", reverse: false };
+    case "PRICE_DESC":
+      return { sortKey: "PRICE", reverse: true };
+    case "BEST_SELLING":
+      return { sortKey: "BEST_SELLING", reverse: false };
+    case "CREATED_AT_DESC":
+      return { sortKey: "CREATED_AT", reverse: true };
+    default:
+      return { sortKey: "RELEVANCE", reverse: false };
+  }
+}
+
+function formatCartInfo(cartSummary: CartSummary | null): string {
+  if (!cartSummary || cartSummary.itemCount === 0) return "Cart: Empty";
+  const total = cartSummary.total ?? "unknown";
+  return `Cart: ${cartSummary.itemCount} items, Total: PKR ${total}`;
+}
+
+function buildSystemPrompt(storeName: string, context: AgentContext, forceTools: boolean): string {
+  const base = buildSystemPromptBody(storeName, context);
+  if (!forceTools) return base;
+  return `${FORCE_TOOL_USE_PREFIX}\n\n${base}`;
+}
+
+function buildSystemPromptBody(storeName: string, context: AgentContext): string {
+  const checkoutProgress = context.checkoutDraft
+    ? Object.entries(context.checkoutDraft)
+        .filter(([key, value]) => key !== "countryCode" && Boolean(value))
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(", ")
+    : "None collected yet";
+
+  return `You are a friendly, efficient AI sales assistant for ${storeName}.
+Your personality: helpful, concise, like a good salesman — not a chatbot.
+
+## YOUR GOAL
+Help customers find products, add to cart, and complete checkout as smoothly as possible.
+Minimize the number of messages. Do the work, then confirm.
+
+## HOW TO HANDLE SHOPPING REQUESTS
+- Customer mentions ANY product → call search_products immediately
+- After searching: pick the BEST match yourself, show it with price
+- If customer says "buy", "order", "get me", "I want" → they want to buy, not just browse
+- For buy intent: search → find best match → quote price → ask "Want me to add it?"
+- Never make customer type "the first one" or "add it" — make it easy with yes/no
+- Always show total price when quantity > 1 (e.g. "2x PKR 1199 = PKR 2398 total")
+
+## CHECKOUT FLOW — FOLLOW THIS EXACTLY
+
+When user says checkout / pay / place order / let's go:
+
+STEP 1 — Check cart
+  Call get_cart first. If cart is empty, tell user to add items first.
+
+STEP 2 — Collect details one at a time (conversationally)
+  Ask naturally, one field per message:
+  - "What's your full name?"
+  - "What's your email?"
+  - "Phone number?"
+  - "Street address?"
+  - "City?"
+  - "Zip/postal code?"
+
+  As soon as user provides a value → call save_checkout_info immediately.
+  After saving email → call lookup_saved_address.
+  If saved address found → ask "I have your saved address: X. Use it?"
+  If yes → call apply_saved_address → skip address fields → go to STEP 3.
+
+STEP 3 — Build checkout URL
+  When ALL required fields collected (fullName, email, phone, address1, city, zip):
+  Call build_checkout_url immediately.
+  Then reply: "All set! Tap the button below to complete your order."
+  Do NOT paste the URL as text — the widget shows the button automatically.
+
+REQUIRED FIELDS: fullName, email, phone, address1, city, zip
+OPTIONAL FIELDS: address2 (skip if user says 'none' or 'skip')
+DEFAULT COUNTRY: Pakistan (PK) — never ask for country
+PROVINCE: auto-inferred from city — never ask for province
+
+## HOW TO HANDLE CART OPERATIONS
+- "Clear/empty/delete cart" → call clear_cart immediately, confirm after
+- "Remove X" → call remove_cart_item for that specific item
+- "What's in my cart" → call get_cart
+
+## RESPONSE STYLE
+- Short and friendly. Max 3 sentences per reply.
+- Don't say "I'm searching" or "Please wait" — just do it and report back
+- Don't repeat product info already shown in cards
+- Use PKR for prices (this store is Pakistan-based)
+- If customer writes in Urdu/Roman Urdu → reply in the same style
+- Never paste raw URLs — the widget shows a "Complete Order" button automatically
+
+## CURRENT STATE
+${formatCartInfo(context.cartSummary)}
+Checkout info collected: ${checkoutProgress}
+Checkout ready: ${context.checkoutReady ? "YES — share checkout link" : "No"}`;
+}
+
+async function refreshCartSummary(context: AgentContext): Promise<CartSummary | null> {
+  if (!context.cartId) return null;
+  const cart = await getCartWithLines({
+    store: context.storefrontStore,
+    cartId: context.cartId,
+  });
+  if (!cart) return null;
+  return toCartSummary(cart);
+}
+
+async function executeTool(
+  name: string,
+  args: Record<string, unknown>,
+  context: AgentContext
+): Promise<{ result: Record<string, unknown>; contextUpdates: Partial<AgentContext> }> {
+  const contextUpdates: Partial<AgentContext> = {};
+
+  switch (name) {
+    case "search_products": {
+      const { sortKey, reverse } = mapToolSort(typeof args.sort === "string" ? args.sort : undefined);
+      const products = await searchProducts(context.storefrontStore, {
+        query: String(args.query ?? ""),
+        sortKey,
+        reverse,
+        first: 5,
+      });
+      return { result: { products, count: products.length }, contextUpdates };
+    }
+
+    case "add_to_cart": {
+      const quantity = Math.min(10, Math.max(1, Number(args.quantity) || 1));
+      const cartResult = await addToCart({
+        store: context.storefrontStore,
+        cartId: context.cartId,
+        variantId: String(args.variantId ?? ""),
+        quantity,
+      });
+      contextUpdates.cartId = cartResult.cartId;
+      contextUpdates.lastAddedProduct = {
+        title: String(args.productTitle ?? ""),
+        price: String(args.price ?? ""),
+        quantity,
+      };
+      contextUpdates.checkoutReady = false;
+      contextUpdates.cartAction = {
+        checkoutUrl: cartResult.checkoutUrl,
+        totalPrice: cartResult.totalPrice,
+        cartId: cartResult.cartId,
+      };
+      const summary = await getCartWithLines({
+        store: context.storefrontStore,
+        cartId: cartResult.cartId,
+      });
+      if (summary) contextUpdates.cartSummary = toCartSummary(summary);
+      return {
+        result: {
+          success: true,
+          cartId: cartResult.cartId,
+          checkoutUrl: cartResult.checkoutUrl,
+        },
+        contextUpdates,
+      };
+    }
+
+    case "get_cart": {
+      if (!context.cartId) {
+        contextUpdates.cartSummary = null;
+        return { result: { empty: true, lines: [] }, contextUpdates };
+      }
+      const cart = await getCartWithLines({
+        store: context.storefrontStore,
+        cartId: context.cartId,
+      });
+      if (!cart) {
+        contextUpdates.cartSummary = null;
+        return { result: { empty: true }, contextUpdates };
+      }
+      const summary = toCartSummary(cart);
+      contextUpdates.cartSummary = summary;
+      contextUpdates.cartAction = {
+        checkoutUrl: cart.checkoutUrl,
+        totalPrice: cart.totalPrice,
+        cartId: context.cartId,
+      };
+      return { result: summary, contextUpdates };
+    }
+
+    case "clear_cart": {
+      if (context.cartId) {
+        const cart = await getCartWithLines({
+          store: context.storefrontStore,
+          cartId: context.cartId,
+        });
+        if (cart?.lines.length) {
+          await cartLinesRemove({
+            store: context.storefrontStore,
+            cartId: context.cartId,
+            lineIds: cart.lines.map((line) => line.id),
+          });
+        }
+      }
+      contextUpdates.checkoutReady = false;
+      contextUpdates.checkoutDraft = createInitialCheckoutDraft();
+      contextUpdates.cartSummary = null;
+      contextUpdates.lastAddedProduct = null;
+      contextUpdates.cartAction = null;
+      contextUpdates.lastSearchProducts = [];
+      return { result: { cleared: true }, contextUpdates };
+    }
+
+    case "remove_cart_item": {
+      if (!context.cartId) return { result: { error: "Cart is empty" }, contextUpdates };
+      await cartLinesRemove({
+        store: context.storefrontStore,
+        cartId: context.cartId,
+        lineIds: [String(args.lineId ?? "")],
+      });
+      const summary = await refreshCartSummary(context);
+      contextUpdates.cartSummary = summary;
+      if (summary) {
+        contextUpdates.cartAction = {
+          checkoutUrl: summary.checkoutUrl,
+          totalPrice: summary.total,
+          cartId: context.cartId,
+        };
+      }
+      return {
+        result: { removed: true, product: args.productTitle },
+        contextUpdates,
+      };
+    }
+
+    case "save_checkout_info": {
+      const field = String(args.field ?? "") as CheckoutField;
+      const rawValue = String(args.value ?? "");
+      const draft = { ...(context.checkoutDraft ?? createInitialCheckoutDraft()) };
+
+      if (field === "fullName") {
+        const nameNorm = await normalizeFullNameInput(rawValue);
+        if (!nameNorm.ok) return { result: { saved: false, field, error: nameNorm.reason }, contextUpdates };
+        draft.fullName = nameNorm.fullName;
+      } else if (field === "email") {
+        const emailNorm = normalizeEmailInput(rawValue);
+        if (!emailNorm.ok) return { result: { saved: false, field, error: emailNorm.reason }, contextUpdates };
+        draft.email = emailNorm.email;
+      } else {
+        const parsed = parseCheckoutAnswer(field, rawValue);
+        if (!parsed.ok) return { result: { saved: false, field, error: parsed.reason }, contextUpdates };
+        if (field === "address2") {
+          draft.address2 = parsed.value;
+        } else {
+          draft[field] = parsed.value;
+        }
+        if (field === "city" && !draft.province) {
+          const code = normalizeProvinceCode("", parsed.value);
+          const labels: Record<string, string> = {
+            PB: "Punjab",
+            SD: "Sindh",
+            KP: "Khyber Pakhtunkhwa",
+            BA: "Balochistan",
+            IS: "Islamabad",
+            GB: "Gilgit-Baltistan",
+            JK: "Azad Kashmir",
+          };
+          draft.province = labels[code] ?? draft.province;
+        }
+      }
+
+      contextUpdates.checkoutDraft = draft;
+      return { result: { saved: true, field, value: draft[field] }, contextUpdates };
+    }
+
+    case "lookup_saved_address": {
+      const email = String(args.email ?? "").toLowerCase().trim();
+      const profile = await getSavedCustomerProfile({
+        storeId: context.storeId,
+        identifier: email,
+      });
+      if (!profile) return { result: { found: false }, contextUpdates };
+      return {
+        result: {
+          found: true,
+          summary: buildSavedAddressSummary(profile),
+          address: profile,
+        },
+        contextUpdates,
+      };
+    }
+
+    case "apply_saved_address": {
+      const email = String(args.email ?? "").toLowerCase().trim();
+      const profile = await getSavedCustomerProfile({
+        storeId: context.storeId,
+        identifier: email,
+      });
+      if (profile) {
+        contextUpdates.checkoutDraft = {
+          ...(context.checkoutDraft ?? createInitialCheckoutDraft()),
+          ...profile,
+        };
+      }
+      return {
+        result: { applied: Boolean(profile), address: profile ?? null },
+        contextUpdates,
+      };
+    }
+
+    case "build_checkout_url": {
+      const draft = context.checkoutDraft ?? createInitialCheckoutDraft();
+      const missing = getMissingFields({
+        ...draft,
+        country: draft.countryCode ?? "PK",
+      });
+      if (missing.length > 0) {
+        return {
+          result: {
+            success: false,
+            missing,
+            message: `Still need: ${missing.join(", ")}`,
+          },
+          contextUpdates,
+        };
+      }
+
+      if (!context.cartId) {
+        return {
+          result: { success: false, message: "Cart is empty or checkout URL unavailable" },
+          contextUpdates,
+        };
+      }
+
+      const cart = await getCartCheckoutUrl({
+        store: context.storefrontStore,
+        cartId: context.cartId,
+      });
+      if (!cart?.checkoutUrl) {
+        return {
+          result: { success: false, message: "Cart is empty or checkout URL unavailable" },
+          contextUpdates,
+        };
+      }
+
+      const prefilled = buildCheckoutUrl(cart.checkoutUrl, {
+        fullName: draft.fullName,
+        email: draft.email,
+        phone: draft.phone,
+        address1: draft.address1,
+        address2: draft.address2,
+        city: draft.city,
+        province: draft.province,
+        zip: draft.zip,
+        country: draft.countryCode ?? "PK",
+      });
+
+      contextUpdates.checkoutReady = true;
+      contextUpdates.cartAction = {
+        checkoutUrl: prefilled,
+        totalPrice: cart.totalPrice,
+        cartId: context.cartId,
+      };
+
+      if (draft.email) {
+        try {
+          await upsertCustomerProfile({
+            storeId: context.storeId,
+            identifier: draft.email,
+            identifierType: "email",
+            draft,
+          });
+        } catch {
+          // non-fatal
+        }
+      }
+
+      return {
+        result: {
+          success: true,
+          checkoutUrl: prefilled,
+          totalPrice: cart.totalPrice,
+          message: "Checkout URL ready",
+        },
+        contextUpdates,
+      };
+    }
+
+    default:
+      return { result: { error: `Unknown tool: ${name}` }, contextUpdates };
+  }
+}
+
+export function buildProductsAvailableMessage(products: ShopifyProduct[]): string {
+  if (products.length === 0) return FALLBACK_REPLY;
+  if (products.length === 1) {
+    const product = products[0];
+    const price = product.price ? `PKR ${product.price}` : "";
+    return price
+      ? `Found it! ${product.title} — ${price} each. Want me to add it to your cart?`
+      : `Found it! ${product.title}. Want me to add it to your cart?`;
+  }
+  const names = products
+    .slice(0, 5)
+    .map((product) => product.title)
+    .join(", ");
+  return `Here are our top picks: ${names}. Which one would you like?`;
+}
+
+function finalizeOutput(
+  reply: string,
+  context: AgentContext,
+  toolsUsed: string[]
+): AgentLoopOutput {
+  const products = context.lastSearchProducts ?? [];
+  const resolvedReply =
+    reply === FALLBACK_REPLY && products.length > 0
+      ? buildProductsAvailableMessage(products)
+      : reply;
+
+  return {
+    reply: resolvedReply,
+    updatedContext: context,
+    toolsUsed,
+    products,
+    checkoutReady: context.checkoutReady ?? false,
+    cartAction: context.cartAction ?? null,
+  };
+}
+
+async function runForcedSearchFallback(
+  userMessage: string,
+  currentContext: AgentContext,
+  messages: GroqChatMessageWithTools[],
+  toolsUsed: string[]
+): Promise<AgentContext> {
+  console.warn("[agent] LLM skipped tools on first turn, forcing search fallback");
+  const syntheticId = `fallback_search_${Date.now()}`;
+  const toolArgs = { query: userMessage };
+
+  toolsUsed.push("search_products");
+
+  const { result, contextUpdates } = await executeTool(
+    "search_products",
+    toolArgs,
+    currentContext
+  );
+  const updatedContext = { ...currentContext, ...contextUpdates };
+  if (Array.isArray(result.products)) {
+    updatedContext.lastSearchProducts = result.products as ShopifyProduct[];
+  }
+
+  messages.push({
+    role: "assistant",
+    content: null,
+    tool_calls: [
+      {
+        id: syntheticId,
+        type: "function",
+        function: {
+          name: "search_products",
+          arguments: JSON.stringify(toolArgs),
+        },
+      },
+    ],
+  });
+  messages.push({
+    role: "tool",
+    tool_call_id: syntheticId,
+    content: JSON.stringify(result),
   });
 
-  if (!result.ok) {
-    if (params.resultMode === "no_results") {
-      return parseAgentResponse(
-        JSON.stringify({
-          intent: "product_search",
-          message: buildNoResultsMessage(params.storeName, params.searchedQuery),
-        })
-      );
+  return updatedContext;
+}
+
+export async function runAgentLoop({
+  userMessage,
+  history,
+  context,
+  storeName,
+  maxIterations = MAX_ITERATIONS,
+}: AgentLoopInput): Promise<AgentLoopOutput> {
+  const toolsUsed: string[] = [];
+  let currentContext: AgentContext = {
+    ...context,
+    checkoutDraft: context.checkoutDraft ?? createInitialCheckoutDraft(),
+    checkoutReady: context.checkoutReady ?? false,
+    cartAction: context.cartAction ?? null,
+    cartSummary: context.cartSummary ?? null,
+    lastSearchProducts: context.lastSearchProducts ?? [],
+    lastAddedProduct: context.lastAddedProduct ?? null,
+  };
+
+  if (!getGroqKey()) {
+    return finalizeOutput(
+      "Shop assistant is not fully configured (missing GROQ_API_KEY).",
+      currentContext,
+      toolsUsed
+    );
+  }
+
+  console.log("[agent] Groq client: direct HTTP API (groq-sdk not in dependencies)");
+
+  const messages: GroqChatMessageWithTools[] = [
+    ...history.slice(-10).map((message) => ({ role: message.role, content: message.content })),
+    { role: "user", content: userMessage },
+  ];
+
+  let emptyContentRetries = 0;
+  let forcedSearchFallback = false;
+
+  for (let i = 0; i < maxIterations; i++) {
+    const forceTools = i === 0 && toolsUsed.length === 0;
+    const systemPrompt = buildSystemPrompt(storeName, currentContext, forceTools);
+
+    const response = await groqChatCompletionWithTools({
+      model: GROQ_CHAT_MODEL,
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      tools: TOOLS,
+      tool_choice: "auto",
+      max_tokens: 500,
+    });
+
+    if (!response.ok) {
+      console.warn("[agent] Groq API error", { status: response.status, iteration: i });
+      if (i === 0 && !forcedSearchFallback) {
+        currentContext = await runForcedSearchFallback(
+          userMessage,
+          currentContext,
+          messages,
+          toolsUsed
+        );
+        forcedSearchFallback = true;
+        continue;
+      }
+      return finalizeOutput(FALLBACK_REPLY, currentContext, toolsUsed);
     }
-    if (params.resultMode === "confirm_offer" && params.selectedProduct) {
-      return parseAgentResponse(
-        JSON.stringify({
-          intent: "product_search",
-          message: `Great choice — ${formatProductLine(params.selectedProduct)}. Shall I add it to your cart?`,
-        })
-      );
+
+    const { message, finishReason } = response;
+    const toolCalls = message.tool_calls ?? [];
+
+    if (toolCalls.length === 0) {
+      if (
+        i === 0 &&
+        toolsUsed.length === 0 &&
+        finishReason === "stop" &&
+        !forcedSearchFallback
+      ) {
+        currentContext = await runForcedSearchFallback(
+          userMessage,
+          currentContext,
+          messages,
+          toolsUsed
+        );
+        forcedSearchFallback = true;
+        continue;
+      }
+
+      const content = message.content?.trim();
+      if (!content) {
+        if (emptyContentRetries < 1) {
+          emptyContentRetries++;
+          continue;
+        }
+        return finalizeOutput(FALLBACK_REPLY, currentContext, toolsUsed);
+      }
+      return finalizeOutput(content, currentContext, toolsUsed);
     }
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "chitchat",
-        message: "I can help you browse products. Please try again in a moment.",
-      })
-    );
+
+    messages.push({
+      role: "assistant",
+      content: message.content,
+      tool_calls: toolCalls,
+    });
+
+    for (const toolCall of toolCalls) {
+      const toolName = toolCall.function.name;
+      toolsUsed.push(toolName);
+
+      let toolArgs: Record<string, unknown> = {};
+      try {
+        toolArgs = JSON.parse(toolCall.function.arguments || "{}") as Record<string, unknown>;
+      } catch {
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({ error: "Invalid tool arguments" }),
+        });
+        continue;
+      }
+
+      try {
+        const { result, contextUpdates } = await executeTool(toolName, toolArgs, currentContext);
+        currentContext = { ...currentContext, ...contextUpdates };
+
+        if (toolName === "search_products" && Array.isArray(result.products)) {
+          currentContext.lastSearchProducts = result.products as ShopifyProduct[];
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      } catch (toolError) {
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({
+            error: toolError instanceof Error ? toolError.message : "Tool failed",
+          }),
+        });
+      }
+    }
+
+    if (finishReason === "stop" && message.content?.trim()) {
+      return finalizeOutput(message.content.trim(), currentContext, toolsUsed);
+    }
   }
 
-  const agent = parseAgentResponse(result.content);
-
-  if (
-    params.resultMode === "no_results" &&
-    /\b(searching|looking for|let me (find|search|look)|i('ll| will) (search|look|find))\b/i.test(
-      agent.message
-    )
-  ) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "product_search",
-        message: buildNoResultsMessage(params.storeName, params.searchedQuery),
-      })
-    );
-  }
-
-  if (params.resultMode === "cart_added") {
-    const qty = params.selectedQuantity && params.selectedQuantity > 1 ? `${params.selectedQuantity} × ` : "";
-    const name = params.selectedProduct?.title ?? "your item";
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "add_to_cart",
-        message: `Done! I've added ${qty}${name} to your cart.`,
-      })
-    );
-  }
-
-  if (params.resultMode === "cart_added_pause") {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "add_to_cart",
-        message: "Done! Added to your cart. Would you like to checkout?",
-      })
-    );
-  }
-
-  if (params.resultMode === "checkout_ready" && params.cartAction?.checkoutUrl) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "start_checkout",
-        message: buildCheckoutReadyMessage(),
-      })
-    );
-  }
-
-  if (
-    params.resultMode !== "checkout_ready" &&
-    params.resultMode !== "collecting_checkout" &&
-    !params.cartAction?.checkoutUrl &&
-    /\b(proceed to payment|proceed to pay|your total comes out|please proceed to payment)\b/i.test(
-      agent.message
-    )
-  ) {
-    const hasCart = Boolean(params.cartAction?.cartId);
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "start_checkout",
-        message: hasCart
-          ? buildCheckoutStartMessage(params.cartAction?.totalPrice ?? undefined)
-          : buildEmptyCartCheckoutMessage(),
-      })
-    );
-  }
-
-  if (
-    params.resultMode !== "checkout_ready" &&
-    params.resultMode !== "collecting_checkout" &&
-    !params.cartAction?.checkoutUrl &&
-    /\b(added|i've added|added to your cart|added them to your cart)\b/i.test(agent.message)
-  ) {
-    return parseAgentResponse(
-      JSON.stringify({
-        intent: "product_search",
-        message:
-          params.selectedProduct && params.sessionContext?.stage === "awaiting_confirm"
-            ? `I haven't added it yet. Say "add to cart" or click the Add to cart button when you're ready.`
-            : "I haven't updated your cart yet. Tell me which product you'd like, or use the Add to cart button.",
-      })
-    );
-  }
-
-  return agent;
+  return finalizeOutput(FALLBACK_REPLY, currentContext, toolsUsed);
 }

@@ -1,10 +1,11 @@
+import type { StorefrontStore } from "@/lib/shopify/storefront";
+
 export type SessionMessage = {
   role: "user" | "assistant";
   content: string;
 };
 
 export type SearchSortKey = "RELEVANCE" | "CREATED_AT" | "PRICE" | "BEST_SELLING";
-export type IntentConfidence = "low" | "medium" | "high";
 
 export type ShopifyProduct = {
   id: string;
@@ -22,21 +23,8 @@ export type ShopifyProduct = {
   }>;
 };
 
-export type ConversationStage =
-  | "greeting"
-  | "no_results"
-  | "presenting_options"
-  | "selecting_variant"
-  | "awaiting_quantity"
-  | "awaiting_cart_confirm"
-  | "awaiting_confirm"
-  | "cart_added_pause"
-  | "confirming_saved_address"
-  | "collecting_checkout"
-  | "checkout_ready"
-  | "completed";
-
 export type CartLineItem = {
+  id: string;
   title: string;
   variantTitle: string;
   quantity: number;
@@ -47,6 +35,13 @@ export type CartLineItem = {
 export type CartSummaryWithLines = {
   checkoutUrl: string;
   totalPrice: string | null;
+  lines: CartLineItem[];
+};
+
+export type CartSummary = {
+  itemCount: number;
+  total: string | null;
+  checkoutUrl: string;
   lines: CartLineItem[];
 };
 
@@ -72,62 +67,36 @@ export type CheckoutField =
   | "province"
   | "zip";
 
+export type CartAction = {
+  checkoutUrl: string;
+  totalPrice: string | null;
+  cartId?: string;
+};
+
+export type LastAddedProduct = {
+  title: string;
+  price: string;
+  quantity: number;
+};
+
+/** Persisted session state (no runtime-only fields). */
 export type ChatSessionContext = {
-  stage: ConversationStage;
-  lastProducts?: ShopifyProduct[];
-  selectedProduct?: ShopifyProduct;
-  selectedVariantId?: string;
-  selectedQuantity?: number;
-  lastSearchQuery?: string;
   checkoutDraft?: CheckoutDraft;
-  checkoutField?: CheckoutField;
+  cartAction?: CartAction | null;
+  checkoutReady?: boolean;
+  cartSummary?: CartSummary | null;
+  lastAddedProduct?: LastAddedProduct | null;
 };
 
-export type AgentIntent =
-  | "product_search"
-  | "browse_alternatives"
-  | "select_product"
-  | "confirm_add_to_cart"
-  | "add_to_cart"
-  | "show_cart"
-  | "start_checkout"
-  | "chitchat"
-  | "off_topic";
-
-export type AgentResponse = {
-  message: string;
-  intent: AgentIntent;
-  query?: string;
-  variantId?: string;
+/** Runtime agent context (storefrontStore and storeId are not persisted). */
+export type AgentContext = {
+  cartId: string | null;
+  checkoutDraft: CheckoutDraft;
+  checkoutReady: boolean;
+  cartAction: CartAction | null;
+  cartSummary: CartSummary | null;
+  lastSearchProducts: ShopifyProduct[];
+  lastAddedProduct: LastAddedProduct | null;
+  storefrontStore: StorefrontStore;
+  storeId: string;
 };
-
-export type ClarificationPayload = {
-  question: string;
-  suggestions: string[];
-};
-
-export type ShopAssistActionPlan = {
-  intent: AgentIntent;
-  shopifyQuery?: string;
-  sortKey?: SearchSortKey;
-  reverse?: boolean;
-  variantId?: string;
-  productIndex?: number;
-  productTitle?: string;
-  quantity?: number;
-  confidence: IntentConfidence;
-  needsClarification: boolean;
-  clarification?: ClarificationPayload;
-};
-
-export type QueryRecoveryResult =
-  | {
-      status: "rewritten";
-      plan: ShopAssistActionPlan;
-      reason: string;
-    }
-  | {
-      status: "clarification";
-      clarification: ClarificationPayload;
-      reason: string;
-    };

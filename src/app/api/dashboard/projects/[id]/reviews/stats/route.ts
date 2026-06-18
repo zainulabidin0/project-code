@@ -51,6 +51,23 @@ export async function GET(_req: NextRequest, { params }: Params) {
     .from(reviews)
     .where(eq(reviews.projectId, pid));
 
+  const timeline = await db
+    .select({
+      date: sql<string>`date_trunc('day', ${reviews.createdAt})::date`,
+      positive: sql<number>`count(*) filter (where ${reviews.sentiment} = 'POSITIVE')::int`,
+      negative: sql<number>`count(*) filter (where ${reviews.sentiment} = 'NEGATIVE')::int`,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.projectId, pid),
+        sql`${reviews.createdAt} >= now() - interval '30 days'`
+      )
+    )
+    .groupBy(sql`date_trunc('day', ${reviews.createdAt})`)
+    .orderBy(sql`date_trunc('day', ${reviews.createdAt})`);
+
   return NextResponse.json({
     success: true,
     data: {
@@ -58,6 +75,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       positive: pos?.c ?? 0,
       negative: neg?.c ?? 0,
       netScore: netRow?.s ?? 0,
+      timeline,
     },
   });
 }

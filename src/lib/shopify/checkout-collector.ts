@@ -1,3 +1,6 @@
+import { normalizeEmailInput } from "@/lib/shopify/email-normalizer";
+import type { CheckoutDraft } from "@/lib/shopify/types";
+
 export type CheckoutField =
   | "fullName"
   | "email"
@@ -7,18 +10,6 @@ export type CheckoutField =
   | "city"
   | "province"
   | "zip";
-
-export type CheckoutDraft = {
-  fullName?: string;
-  email?: string;
-  phone?: string;
-  address1?: string;
-  address2?: string;
-  city?: string;
-  province?: string;
-  zip?: string;
-  countryCode?: string;
-};
 
 export const DEFAULT_COUNTRY_CODE = "PK";
 
@@ -33,12 +24,6 @@ const CHECKOUT_FIELD_ORDER: CheckoutField[] = [
   "zip",
 ];
 
-export const CHECKOUT_STEP_COUNT = CHECKOUT_FIELD_ORDER.length;
-
-function fieldStep(field: CheckoutField): number {
-  return CHECKOUT_FIELD_ORDER.indexOf(field) + 1;
-}
-
 export function isShowSavedDetailsRequest(message: string): boolean {
   const text = message.trim().toLowerCase();
   return (
@@ -52,8 +37,14 @@ export function isShowSavedDetailsRequest(message: string): boolean {
 
 export function isCheckoutIntent(message: string): boolean {
   const text = message.trim().toLowerCase();
-  return /\b(checkout|check out|pay now|make payment|place order|complete order|finish order|proceed to pay|proceed to payment|want to pay|ready to pay|bill|payment|order confirm|checkout kr|payment kr|pay kr|order krna|ab pay|ab checkout)\b/i.test(
-    text
+  return (
+    /\b(checkout|check out|pay now|make payment|place order|complete order|finish order|proceed to pay|proceed to payment|want to pay|ready to pay|bill|payment|order confirm|checkout kr|payment kr|pay kr|order krna|ab pay|ab checkout)\b/i.test(
+      text
+    ) ||
+    /\b(let'?s|lets)\s+(go\s+to\s+)?checkout\b/i.test(text) ||
+    /\bgo\s+to\s+checkout\b/i.test(text) ||
+    /\btake\s+me\s+to\s+checkout\b/i.test(text) ||
+    /\bopen\s+checkout\b/i.test(text)
   );
 }
 
@@ -79,7 +70,6 @@ const PK_PROVINCE_CODES: Record<string, string> = {
   jk: "JK",
 };
 
-/** Major PK cities → Shopify provinceCode (shoppers often say city instead of province). */
 const PK_CITY_TO_PROVINCE: Record<string, string> = {
   lahore: "PB",
   faisalabad: "PB",
@@ -133,59 +123,8 @@ export function getNextCheckoutField(draft: CheckoutDraft): CheckoutField | null
   return null;
 }
 
-export function getCheckoutQuestion(field: CheckoutField): string {
-  const step = fieldStep(field);
-  const stepLabel = `Step ${step} of ${CHECKOUT_STEP_COUNT}`;
-
-  switch (field) {
-    case "fullName":
-      return `${stepLabel} — What is your full name for delivery?\n(e.g. Ali Khan)`;
-    case "email":
-      return `${stepLabel} — What email should we send your order confirmation to?\n(e.g. ali@gmail.com)`;
-    case "phone":
-      return `${stepLabel} — What phone number can the courier call?\n(e.g. 0300-1234567)`;
-    case "address1":
-      return `${stepLabel} — What is your delivery address?\n(House/plot number and street name)`;
-    case "address2":
-      return `${stepLabel} — Any apartment, floor, or nearby landmark?\n(Reply skip if not needed)`;
-    case "city":
-      return `${stepLabel} — Which city should we deliver to?\n(e.g. Lahore, Karachi)`;
-    case "province":
-      return `${stepLabel} — Which province?\n(e.g. Punjab, Sindh, KPK)`;
-    case "zip":
-      return `${stepLabel} — What is your postal code?\n(e.g. 54000)`;
-    default:
-      return "Please share the next delivery detail.";
-  }
-}
-
-export function buildCheckoutStartMessage(cartTotal?: string): string {
-  const totalLine = cartTotal ? `\nYour cart total: ${cartTotal}` : "";
-  return `Sure — I'll help you checkout!${totalLine}\n\nI'll ask ${CHECKOUT_STEP_COUNT} quick delivery questions. Just reply to each message one by one.\n\n${getCheckoutQuestion("fullName")}`;
-}
-
-export function buildCartAddedCheckoutIntro(cartTotal?: string): string {
-  const totalLine = cartTotal ? `\nCart total: ${cartTotal}` : "";
-  return `Added to your cart!${totalLine}\n\nBefore checkout, I need your delivery details. I'll ask ${CHECKOUT_STEP_COUNT} short questions — reply to each one.\n\n${getCheckoutQuestion("fullName")}`;
-}
-
-export function buildCheckoutReadyMessage(draft?: CheckoutDraft): string {
-  if (draft && !isCheckoutDraftComplete(draft)) {
-    return "I still need a few delivery details before checkout can be prefilled. I'll ask the remaining questions now.";
-  }
-  return "All set! Your delivery details are saved.\n\nTap the Complete order button below to open checkout — your name and address will already be filled in.";
-}
-
-export function buildCheckoutApplyFailedMessage(): string {
-  return "I saved your details here, but couldn't push them to Shopify checkout just now. Please say \"checkout\" to try again.";
-}
-
-export function buildCheckoutResumeMessage(field: CheckoutField): string {
-  return `Let's continue checkout.\n\n${getCheckoutQuestion(field)}`;
-}
-
-export function buildEmptyCartCheckoutMessage(): string {
-  return "Your cart is empty right now. Tell me what you'd like to buy and I'll add it for you first.";
+export function buildCheckoutRedirectMessage(): string {
+  return "Sure — opening checkout for you now. Your delivery details are already filled in.";
 }
 
 export function splitFullName(fullName: string): { firstName: string; lastName: string } {
@@ -217,10 +156,6 @@ export function normalizeProvinceCode(province: string, city?: string): string {
   if (/gilgit/i.test(province)) return "GB";
   if (/kashmir|ajk/i.test(province)) return "JK";
 
-  if (cityKey && PK_CITY_TO_PROVINCE[cityKey]) {
-    return PK_CITY_TO_PROVINCE[cityKey];
-  }
-
   return "PB";
 }
 
@@ -247,11 +182,11 @@ export function parseCheckoutAnswer(
   }
 
   if (field === "email") {
-    const email = trimmed.toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return { ok: false, reason: "That doesn't look like a valid email. Please try again." };
+    const emailNorm = normalizeEmailInput(trimmed);
+    if (!emailNorm.ok) {
+      return { ok: false, reason: emailNorm.reason };
     }
-    return { ok: true, value: email };
+    return { ok: true, value: emailNorm.email };
   }
 
   if (field === "phone") {
@@ -297,131 +232,6 @@ export function isCheckoutDraftComplete(draft: CheckoutDraft): boolean {
   return getNextCheckoutField(draft) === null;
 }
 
-export type CheckoutStepResult =
-  | {
-      status: "next";
-      draft: CheckoutDraft;
-      field: CheckoutField;
-      message: string;
-    }
-  | {
-      status: "invalid";
-      draft: CheckoutDraft;
-      field: CheckoutField;
-      message: string;
-    }
-  | {
-      status: "complete";
-      draft: CheckoutDraft;
-      message: string;
-    };
-
-export function processCheckoutAnswer(
-  draft: CheckoutDraft,
-  field: CheckoutField,
-  message: string
-): CheckoutStepResult {
-  const parsed = parseCheckoutAnswer(field, message);
-  if (!parsed.ok) {
-    return {
-      status: "invalid",
-      draft,
-      field,
-      message: `${parsed.reason}\n\n${getCheckoutQuestion(field)}`,
-    };
-  }
-
-  const updated = applyCheckoutAnswer(draft, field, parsed.value);
-  const nextField = getNextCheckoutField(updated);
-  if (!nextField) {
-    return {
-      status: "complete",
-      draft: updated,
-      message: buildCheckoutReadyMessage(),
-    };
-  }
-
-  const ack = field === "fullName" ? "Thanks!" : "Got it!";
-  return {
-    status: "next",
-    draft: updated,
-    field: nextField,
-    message: `${ack}\n\n${getCheckoutQuestion(nextField)}`,
-  };
-}
-
-export function beginCheckoutCollection(cartTotal?: string): {
-  draft: CheckoutDraft;
-  field: CheckoutField;
-  message: string;
-} {
-  const draft = createInitialCheckoutDraft();
-  const field = getNextCheckoutField(draft)!;
-  return {
-    draft,
-    field,
-    message: buildCartAddedCheckoutIntro(cartTotal),
-  };
-}
-
-export function beginCheckoutFromExistingCart(cartTotal?: string): {
-  draft: CheckoutDraft;
-  field: CheckoutField;
-  message: string;
-} {
-  const draft = createInitialCheckoutDraft();
-  const field = getNextCheckoutField(draft)!;
-  return {
-    draft,
-    field,
-    message: buildCheckoutStartMessage(cartTotal),
-  };
-}
-
-export function buildCartAddedPauseMessage(
-  productName: string,
-  quantity: number,
-  cartTotal?: string
-): string {
-  const totalLine = cartTotal ? `\nCart total: ${cartTotal}` : "";
-  const qty = quantity > 1 ? `${quantity}× ` : "";
-  return `Done! ${qty}${productName} has been added to your cart.${totalLine}\n\nWould you like to checkout?`;
-}
-
-export function buildSessionAfterCartAdd(params: {
-  sessionContext: {
-    selectedProduct?: import("@/lib/shopify/types").ShopifyProduct;
-    selectedVariantId?: string;
-    selectedQuantity?: number;
-    lastProducts?: import("@/lib/shopify/types").ShopifyProduct[];
-    lastSearchQuery?: string;
-  };
-  cart: { cartId: string; totalPrice: string | null };
-  variantId: string;
-  quantity: number;
-}) {
-  const productName = params.sessionContext.selectedProduct?.title ?? "Your item";
-  const introMessage = buildCartAddedPauseMessage(
-    productName,
-    params.quantity,
-    params.cart.totalPrice ?? undefined
-  );
-
-  return {
-    sessionContext: {
-      ...params.sessionContext,
-      stage: "cart_added_pause" as const,
-      selectedVariantId: params.variantId,
-      selectedQuantity: params.quantity,
-    },
-    cartAction: {
-      cartId: params.cart.cartId,
-      totalPrice: params.cart.totalPrice,
-    },
-    introMessage,
-  };
-}
-
 export function normalizePhoneE164(phone: string, countryCode = DEFAULT_COUNTRY_CODE): string {
   const trimmed = phone.trim();
   const digits = trimmed.replace(/\D/g, "");
@@ -447,11 +257,6 @@ export type CheckoutUrlPrefillDetails = {
   zip?: string;
 };
 
-/**
- * Appends Shopify checkout[...] query params to a cart checkoutUrl.
- * Works with /checkouts/cn/... URLs from cart.checkoutUrl.
- * Shopify may ignore some fields on stores without Checkout Extensibility — best-effort prefill.
- */
 export function buildPrefilledCheckoutUrl(
   baseCheckoutUrl: string,
   details: CheckoutUrlPrefillDetails
@@ -558,43 +363,4 @@ export function buildSavedAddressSummary(draft: CheckoutDraft): string {
   if (draft.province) lines.push(`Province: ${draft.province}`);
   if (draft.zip) lines.push(`Postal code: ${draft.zip}`);
   return lines.join("\n");
-}
-
-export function buildUseSavedAddressPrompt(draft: CheckoutDraft, cartTotal?: string): string {
-  const summary = buildSavedAddressSummary(draft);
-  const totalLine = cartTotal ? `\nCart total: ${cartTotal}` : "";
-  return `I have your delivery details saved from before:${totalLine}\n\n${summary}\n\nShall I use this address? Reply yes to confirm or no to enter a new one.`;
-}
-
-export function beginCheckoutWithSavedDraft(
-  savedDraft: CheckoutDraft,
-  cartTotal?: string
-): {
-  draft: CheckoutDraft;
-  field: CheckoutField | null;
-  message: string;
-  usingSavedDraft: true;
-} {
-  return {
-    draft: savedDraft,
-    field: null,
-    message: buildUseSavedAddressPrompt(savedDraft, cartTotal),
-    usingSavedDraft: true,
-  };
-}
-
-export function beginCheckoutFresh(cartTotal?: string): {
-  draft: CheckoutDraft;
-  field: CheckoutField;
-  message: string;
-  usingSavedDraft: false;
-} {
-  const draft = createInitialCheckoutDraft();
-  const field = getNextCheckoutField(draft)!;
-  return {
-    draft,
-    field,
-    message: buildCheckoutStartMessage(cartTotal),
-    usingSavedDraft: false,
-  };
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { jsonError } from "@/lib/errors";
-import { assertQuotaOk } from "@/lib/usage/quota";
+import { assertShopActionQuotaOk } from "@/lib/usage/quota";
 import { shopUsageLogs } from "@/lib/db/schema";
 import { getActiveStoreByDomain } from "@/lib/shopify/store";
 import { getGroqKey } from "@/lib/groq/client";
@@ -27,8 +27,18 @@ export async function POST(req: NextRequest) {
   const store = await getActiveStoreByDomain(shopDomain);
   if (!store) return jsonError("NOT_FOUND", "Store not found", 404);
 
-  const quota = await assertQuotaOk(store.projectId);
-  if (!quota.ok) return jsonError("RATE_LIMITED", "Monthly quota exceeded", 429);
+  const quota = await assertShopActionQuotaOk(store.projectId, "tts");
+  if (!quota.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "quota_exceeded",
+        message: "Monthly text-to-speech limit reached. Please upgrade your plan.",
+        data: { actionType: "tts", used: quota.used, limit: quota.limit, plan: quota.plan },
+      },
+      { status: 429 }
+    );
+  }
 
   let body: unknown;
   try {

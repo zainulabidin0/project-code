@@ -18,6 +18,11 @@ type ShopAssistPayload = {
     widgetGreeting: string;
   } | null;
   usage: Record<string, number>;
+  plan?: string;
+  quotas?: {
+    voice: { used: number; limit: number; remaining: number; unlimited: boolean };
+    chat: { used: number; limit: number; remaining: number; unlimited: boolean };
+  };
 };
 
 export default function ShopAssistPage({ params }: { params: { id: string } }) {
@@ -110,6 +115,13 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
     if (!res.ok) setError("Failed to disconnect store");
     await load();
   }
+
+  const voiceQuota = data?.quotas?.voice;
+  const voiceUsed = voiceQuota?.used ?? data?.usage?.voice ?? 0;
+  const voiceLimit = voiceQuota?.limit ?? 500;
+  const voiceRemaining = voiceQuota?.remaining ?? Math.max(0, voiceLimit - voiceUsed);
+  const voiceUnlimited = voiceQuota?.unlimited ?? false;
+  const voiceNearLimit = !voiceUnlimited && voiceLimit > 0 && voiceRemaining / voiceLimit <= 0.1;
 
   return (
     <div>
@@ -280,8 +292,29 @@ export default function ShopAssistPage({ params }: { params: { id: string } }) {
           <div className="rounded-lg border border-zinc-800 p-4">
             <h2 className="text-lg font-medium text-white">Usage (this month)</h2>
             <p className="mt-2 text-sm text-zinc-300">Chat: {data?.usage?.chat ?? 0}</p>
-            <p className="text-sm text-zinc-300">Voice: {data?.usage?.voice ?? 0}</p>
-            <p className="text-sm text-zinc-300">Cart add: {data?.usage?.cart_add ?? 0}</p>
+            <div className="mt-2">
+              <p className="text-sm text-zinc-300">
+                Voice: {voiceUsed}
+                {voiceUnlimited ? " (unlimited)" : ` / ${voiceLimit}`}
+              </p>
+              {!voiceUnlimited && (
+                <p className={`text-sm ${voiceNearLimit ? "text-amber-400" : "text-zinc-400"}`}>
+                  {voiceRemaining} voice {voiceRemaining === 1 ? "call" : "calls"} remaining this month
+                  {voiceNearLimit ? " — you're close to the limit" : ""}
+                </p>
+              )}
+              {!voiceUnlimited && voiceLimit > 0 && (
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      voiceNearLimit ? "bg-amber-500" : "bg-emerald-600"
+                    }`}
+                    style={{ width: `${Math.min(100, (voiceUsed / voiceLimit) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+            <p className="mt-2 text-sm text-zinc-300">Cart add: {data?.usage?.cart_add ?? 0}</p>
             <p className="text-sm text-zinc-300">
               Product reviews: {(data?.usage?.sentiment ?? 0) + (data?.usage?.sentiment_batch ?? 0)}
             </p>

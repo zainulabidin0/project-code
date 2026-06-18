@@ -19,6 +19,24 @@ export async function GET(req: NextRequest) {
       name: projects.name,
       description: projects.description,
       createdAt: projects.createdAt,
+      reviewTotal: sql<number>`(
+        select count(*)::int from reviews
+        where reviews.project_id = ${projects.id}
+      )`,
+      reviewPositive: sql<number>`(
+        select count(*)::int from reviews
+        where reviews.project_id = ${projects.id}
+          and reviews.sentiment = 'POSITIVE'
+      )`,
+      reviewNegative: sql<number>`(
+        select count(*)::int from reviews
+        where reviews.project_id = ${projects.id}
+          and reviews.sentiment = 'NEGATIVE'
+      )`,
+      reviewNetScore: sql<number>`(
+        select coalesce(sum(score), 0)::int from reviews
+        where reviews.project_id = ${projects.id}
+      )`,
     })
     .from(projects)
     .where(eq(projects.userId, access.sub));

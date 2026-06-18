@@ -35,6 +35,106 @@ export function getGroqKey(): string | undefined {
 
 export type GroqChatMessage = { role: string; content: string };
 
+export type GroqChatTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
+export type GroqToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+export type GroqChatMessageWithTools =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: GroqToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+export type GroqChatCompletionWithToolsResult =
+  | {
+      ok: true;
+      message: {
+        role: "assistant";
+        content: string | null;
+        tool_calls?: GroqToolCall[];
+      };
+      finishReason: string | null;
+    }
+  | { ok: false; status: number };
+
+export async function groqChatCompletionWithTools(params: {
+  messages: GroqChatMessageWithTools[];
+  model?: string;
+  max_tokens?: number;
+  tools: GroqChatTool[];
+  tool_choice?: "auto" | "none" | "required";
+}): Promise<GroqChatCompletionWithToolsResult> {
+  const key = getGroqKey();
+  if (!key) return { ok: false, status: 503 };
+
+  const res = await fetch(GROQ_CHAT_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: params.model ?? GROQ_CHAT_MODEL,
+      messages: params.messages,
+      tools: params.tools,
+      tool_choice: params.tool_choice ?? "auto",
+      max_tokens: params.max_tokens ?? 1000,
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.warn("[groq] chat completion failed", {
+      status: res.status,
+      body: errText.slice(0, 500),
+      tool_choice: params.tool_choice ?? "auto",
+      model: params.model ?? GROQ_CHAT_MODEL,
+    });
+    return { ok: false, status: res.status };
+  }
+
+  const json = (await res.json()) as {
+    choices?: Array<{
+      finish_reason?: string | null;
+      message?: {
+        role?: string;
+        content?: string | null;
+        tool_calls?: GroqToolCall[];
+      };
+    }>;
+  };
+  const choice = json.choices?.[0];
+  if (!choice?.message) return { ok: false, status: 502 };
+
+  console.log("[agent] Groq response:", {
+    finish_reason: choice.finish_reason ?? null,
+    has_content: Boolean(choice.message.content?.trim()),
+    has_tool_calls: Boolean(choice.message.tool_calls?.length),
+    tool_calls: choice.message.tool_calls?.map((t) => t.function.name),
+  });
+
+  return {
+    ok: true,
+    message: {
+      role: "assistant",
+      content: choice.message.content ?? null,
+      tool_calls: choice.message.tool_calls,
+    },
+    finishReason: choice.finish_reason ?? null,
+  };
+}
+
 export async function groqChatCompletion(params: {
   messages: GroqChatMessage[];
   model?: string;
