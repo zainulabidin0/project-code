@@ -7,7 +7,9 @@ import type {
   ChatSessionContext,
   CheckoutDraft,
   LastAddedProduct,
+  PendingAdd,
   SessionMessage,
+  ShopifyProduct,
 } from "@/lib/shopify/types";
 
 export const DEFAULT_SESSION_CONTEXT: ChatSessionContext = {};
@@ -55,6 +57,27 @@ function parseLastAddedProduct(raw: unknown): LastAddedProduct | null {
   };
 }
 
+function parsePendingAdd(raw: unknown): PendingAdd | null {
+  if (!raw || typeof raw !== "object") return null;
+  const pending = raw as PendingAdd;
+  if (!pending.variantId || !pending.title) return null;
+  return {
+    variantId: pending.variantId,
+    title: pending.title,
+    price: pending.price ?? "",
+    quantity: Number(pending.quantity) || 1,
+  };
+}
+
+function parseLastSearchProducts(raw: unknown): ShopifyProduct[] | null {
+  if (!Array.isArray(raw)) return null;
+  const products = raw.filter(
+    (item): item is ShopifyProduct =>
+      Boolean(item && typeof item === "object" && (item as ShopifyProduct).id && (item as ShopifyProduct).title)
+  );
+  return products.length ? products : null;
+}
+
 export function parseSessionContext(raw: string | null | undefined): ChatSessionContext {
   if (!raw) return { ...DEFAULT_SESSION_CONTEXT };
   try {
@@ -75,6 +98,12 @@ export function parseSessionContext(raw: string | null | undefined): ChatSession
 
     const lastAddedProduct = parseLastAddedProduct(value.lastAddedProduct);
     if (lastAddedProduct) context.lastAddedProduct = lastAddedProduct;
+
+    const pendingAdd = parsePendingAdd(value.pendingAdd);
+    if (pendingAdd) context.pendingAdd = pendingAdd;
+
+    const lastSearchProducts = parseLastSearchProducts(value.lastSearchProducts);
+    if (lastSearchProducts) context.lastSearchProducts = lastSearchProducts;
 
     return context;
   } catch {

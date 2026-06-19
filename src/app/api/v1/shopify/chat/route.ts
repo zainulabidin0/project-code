@@ -6,16 +6,15 @@ import { jsonError } from "@/lib/errors";
 import { assertShopActionQuotaOk } from "@/lib/usage/quota";
 import { shopUsageLogs } from "@/lib/db/schema";
 import { getActiveStoreByDomain } from "@/lib/shopify/store";
+import { executePlan } from "@/lib/shopify/action-executor";
+import { generatePlan } from "@/lib/shopify/planner";
+import { composeReply } from "@/lib/shopify/reply-composer";
 import {
   getOrCreateSession,
   parseMessages,
   parseSessionContext,
   saveSessionState,
 } from "@/lib/shopify/session";
-import {
-  buildProductsAvailableMessage,
-  runAgentLoop,
-} from "@/lib/shopify/gpt-agent";
 import type { AgentContext, ChatSessionContext, SessionMessage } from "@/lib/shopify/types";
 import type { StorefrontStore } from "@/lib/shopify/storefront";
 
@@ -35,6 +34,48 @@ function toSessionContext(context: AgentContext): ChatSessionContext {
     checkoutReady: context.checkoutReady,
     cartSummary: context.cartSummary,
     lastAddedProduct: context.lastAddedProduct,
+    pendingAdd: context.pendingAdd,
+    lastSearchProducts: context.lastSearchProducts,
+  };
+}
+
+function buildStateSnapshot(context: AgentContext): string {
+  const cart = context.cartSummary
+    ? `Cart: ${context.cartSummary.lines?.length ?? 0} items, PKR ${context.cartSummary.total ?? "0"}`
+    : "Cart: empty";
+  const checkout =
+    Object.keys(context.checkoutDraft ?? {}).length > 0
+      ? `Checkout collected: ${JSON.stringify(context.checkoutDraft)}`
+      : "Checkout: not started";
+  const checkoutReady = context.checkoutReady
+    ? "Checkout URL already built (checkoutReady: true) — do NOT use checkout_url_ready unless user wants to proceed"
+    : "Checkout URL not built yet (checkoutReady: false)";
+  const pending = context.pendingAdd
+    ? `Pending product (awaiting confirm): ${context.pendingAdd.title} x${context.pendingAdd.quantity}`
+    : "";
+  const lastSearch = context.lastSearchProducts?.length
+    ? `Last search showed: ${context.lastSearchProducts.map((p) => p.title).join(", ")}`
+    : "";
+  return [cart, checkout, checkoutReady, pending, lastSearch].filter(Boolean).join("\n");
+}
+
+function buildAgentContext(
+  sessionContext: ChatSessionContext,
+  storefrontStore: StorefrontStore,
+  storeId: string,
+  cartId: string | null
+): AgentContext {
+  return {
+    cartId,
+    checkoutDraft: sessionContext.checkoutDraft ?? {},
+    checkoutReady: sessionContext.checkoutReady ?? false,
+    cartAction: sessionContext.cartAction ?? null,
+    cartSummary: sessionContext.cartSummary ?? null,
+    lastSearchProducts: sessionContext.lastSearchProducts ?? [],
+    lastAddedProduct: sessionContext.lastAddedProduct ?? null,
+    pendingAdd: sessionContext.pendingAdd ?? null,
+    storefrontStore,
+    storeId,
   };
 }
 
@@ -56,6 +97,7 @@ export async function POST(req: NextRequest) {
     const parsed = bodySchema.safeParse(body);
     if (!parsed.success) return jsonError("INVALID_INPUT", parsed.error.message, 400);
 
+    phase = "store";
     const store = await getActiveStoreByDomain(shopDomain);
     if (!store) return jsonError("NOT_FOUND", "Shopify store is not configured", 404);
     if (store.authStatus === "REAUTH_REQUIRED") {
@@ -89,68 +131,70 @@ export async function POST(req: NextRequest) {
     const session = await getOrCreateSession(store.id, parsed.data.sessionToken, ip);
     const history = parseMessages(session.messages);
     const sessionContext = parseSessionContext(session.sessionContext);
-
-    const agentContext: AgentContext = {
-      cartId: session.cartToken ?? null,
-      checkoutDraft: sessionContext.checkoutDraft ?? {},
-      checkoutReady: sessionContext.checkoutReady ?? false,
-      cartAction: sessionContext.cartAction ?? null,
-      cartSummary: sessionContext.cartSummary ?? null,
-      lastSearchProducts: [],
-      lastAddedProduct: sessionContext.lastAddedProduct ?? null,
+    const context = buildAgentContext(
+      sessionContext,
       storefrontStore,
-      storeId: store.id,
-    };
+      store.id,
+      session.cartToken ?? null
+    );
 
-    phase = "agent";
-    let result;
-    try {
-      result = await runAgentLoop({
-        userMessage: parsed.data.message,
-        history,
-        context: agentContext,
-        storeName: store.storeName ?? store.shopDomain,
-      });
-    } catch (agentError) {
-      console.error(LOG_PREFIX, "agent loop failed", { requestId, phase, error: agentError });
-      const products = agentContext.lastSearchProducts ?? [];
-      result = {
-        reply: products.length
-          ? buildProductsAvailableMessage(products)
-          : "Something went wrong. Please try again.",
-        updatedContext: agentContext,
-        toolsUsed: [] as string[],
-        products,
-        checkoutReady: agentContext.checkoutReady ?? false,
-        cartAction: agentContext.cartAction ?? null,
-      };
+    phase = "plan";
+    const stateSnapshot = buildStateSnapshot(context);
+    const { plan, usage: planUsage } = await generatePlan(parsed.data.message, history, stateSnapshot);
+
+    console.log(LOG_PREFIX, "plan", {
+      requestId,
+      intent: plan.userIntent,
+      template: plan.replyTemplate,
+      actions: plan.actions.map((a) => a.type),
+      planTokens: planUsage?.total_tokens,
+    });
+
+    phase = "execute";
+    const exec = await executePlan(plan, context);
+
+    phase = "compose";
+    const { reply, usedLlmFallback, usage: composeUsage } = await composeReply(
+      plan,
+      exec,
+      parsed.data.message
+    );
+
+    if (usedLlmFallback) {
+      console.log(LOG_PREFIX, "LLM fallback used", { requestId });
     }
 
+    const updatedContext: AgentContext = {
+      ...context,
+      ...exec.contextUpdates,
+    };
+
+    phase = "save";
     const updatedMessages = [
       ...history,
       { role: "user" as const, content: parsed.data.message },
-      { role: "assistant" as const, content: result.reply },
+      { role: "assistant" as const, content: reply },
     ].slice(-20) satisfies SessionMessage[];
 
-    phase = "save";
     saveSessionState(
       session.id,
       updatedMessages,
-      toSessionContext(result.updatedContext),
-      result.updatedContext.cartId
+      toSessionContext(updatedContext),
+      updatedContext.cartId
     ).catch((err) => {
       console.error(LOG_PREFIX, "Session save failed (non-fatal):", err);
     });
 
     phase = "usage";
     const processingMs = Date.now() - startedAt;
+    const totalTokens = (planUsage?.total_tokens ?? 0) + (composeUsage?.total_tokens ?? 0);
     db.insert(shopUsageLogs)
       .values({
         projectId: store.projectId,
         storeId: store.id,
         sessionId: session.id,
         actionType: "chat",
-        tokensUsed: 0,
+        tokensUsed: totalTokens,
         processingMs,
         status: "SUCCESS",
       })
@@ -162,23 +206,24 @@ export async function POST(req: NextRequest) {
         });
       });
 
-    console.log(LOG_PREFIX, "agent reply", {
+    console.log(LOG_PREFIX, "hybrid reply", {
       requestId,
-      phase: "done",
-      toolsUsed: result.toolsUsed,
-      checkoutReady: result.checkoutReady,
-      productCount: result.products?.length ?? 0,
-      messagePreview: result.reply?.slice(0, 80),
+      usedLlmFallback,
+      llmCalls: usedLlmFallback ? 2 : 1,
+      totalTokens,
+      checkoutReady: updatedContext.checkoutReady,
+      productCount: exec.products?.length ?? 0,
+      messagePreview: reply.slice(0, 80),
     });
 
     return NextResponse.json({
       success: true,
       data: {
-        message: result.reply,
-        products: result.products ?? [],
-        cartAction: result.cartAction,
-        checkoutReady: result.checkoutReady,
-        checkoutUrl: result.cartAction?.checkoutUrl ?? null,
+        message: reply,
+        products: exec.products ?? updatedContext.lastSearchProducts ?? [],
+        cartAction: updatedContext.cartAction,
+        checkoutReady: updatedContext.checkoutReady,
+        checkoutUrl: updatedContext.cartAction?.checkoutUrl ?? null,
         redirectToCheckout: false,
         sessionToken: parsed.data.sessionToken,
       },

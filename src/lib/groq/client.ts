@@ -140,7 +140,10 @@ export async function groqChatCompletion(params: {
   model?: string;
   max_tokens?: number;
   response_format?: { type: "json_object" };
-}): Promise<{ ok: true; content: string } | { ok: false; status: number }> {
+}): Promise<
+  | { ok: true; content: string; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number } }
+  | { ok: false; status: number }
+> {
   const key = getGroqKey();
   if (!key) return { ok: false, status: 503 };
 
@@ -163,9 +166,10 @@ export async function groqChatCompletion(params: {
 
   const json = (await res.json()) as {
     choices?: Array<{ message?: { content?: string | null } }>;
+    usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number };
   };
   const content = json.choices?.[0]?.message?.content?.trim() ?? "";
-  return { ok: true, content };
+  return { ok: true, content, usage: json.usage };
 }
 
 export async function groqSpeechSynthesis(params: {

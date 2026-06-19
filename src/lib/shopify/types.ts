@@ -79,6 +79,13 @@ export type LastAddedProduct = {
   quantity: number;
 };
 
+export type PendingAdd = {
+  variantId: string;
+  quantity: number;
+  title: string;
+  price: string;
+};
+
 /** Persisted session state (no runtime-only fields). */
 export type ChatSessionContext = {
   checkoutDraft?: CheckoutDraft;
@@ -86,6 +93,8 @@ export type ChatSessionContext = {
   checkoutReady?: boolean;
   cartSummary?: CartSummary | null;
   lastAddedProduct?: LastAddedProduct | null;
+  pendingAdd?: PendingAdd | null;
+  lastSearchProducts?: ShopifyProduct[];
 };
 
 /** Runtime agent context (storefrontStore and storeId are not persisted). */
@@ -97,6 +106,7 @@ export type AgentContext = {
   cartSummary: CartSummary | null;
   lastSearchProducts: ShopifyProduct[];
   lastAddedProduct: LastAddedProduct | null;
+  pendingAdd: PendingAdd | null;
   storefrontStore: StorefrontStore;
   storeId: string;
 };

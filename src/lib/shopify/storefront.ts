@@ -42,7 +42,9 @@ export type ProductSearchPlan = {
 type ShopifyProductSortKey = "RELEVANCE" | "CREATED_AT" | "PRICE" | "BEST_SELLING";
 
 const SEARCH_KEYWORD_NOISE =
-  /\b(show|me|some|please|can|you|i|want|find|search|for|the|a|an|products?)\b/gi;
+  /\b(show|me|some|please|can|you|i|want|find|search|for|the|a|an|products?|buy|get|order|need|like|looking)\b/gi;
+
+const LOG_PREFIX_SEARCH = "[storefront/search]";
 
 export function buildSearchQuery(filters: ParsedFilters): string {
   const parts: string[] = [];
@@ -298,11 +300,25 @@ export class StorefrontRequestError extends Error {
 function normalizeSearchKeywords(raw: string): string {
   const normalized = raw
     .toLowerCase()
+    .replace(/^\d+\s*x?\s*/i, "")
     .replace(/[^a-z0-9\s-]/gi, " ")
     .replace(SEARCH_KEYWORD_NOISE, " ")
     .replace(/\s+/g, " ")
     .trim();
   return normalized.slice(0, 120);
+}
+
+/** Try singular form of the last word (e.g. "wireless chargers" → "wireless charger"). */
+function singularizeSearchQuery(query: string): string {
+  const trimmed = query.trim();
+  if (!trimmed) return trimmed;
+  const words = trimmed.split(/\s+/);
+  const last = words[words.length - 1];
+  if (last.length > 3 && last.endsWith("s") && !last.endsWith("ss")) {
+    words[words.length - 1] = last.slice(0, -1);
+    return words.join(" ");
+  }
+  return trimmed;
 }
 
 function mapSortKey(sortKey: SearchSortKey | undefined): ShopifyProductSortKey {
@@ -313,12 +329,13 @@ function mapSortKey(sortKey: SearchSortKey | undefined): ShopifyProductSortKey {
 function buildSearchCandidates(plan: ProductSearchPlan): string[] {
   const requested = (plan.query || "").trim();
   const normalized = normalizeSearchKeywords(requested);
+  const singular = singularizeSearchQuery(normalized || requested);
   const fallbackBySort = plan.sortKey === "CREATED_AT" ? "" : "*";
-  const candidates = [requested, normalized, fallbackBySort, "*"];
+  const candidates = [requested, normalized, singular, fallbackBySort, "*"];
   const unique = new Set<string>();
   for (const candidate of candidates) {
     const value = candidate.trim();
-    if (!unique.has(value)) unique.add(value);
+    if (value && !unique.has(value)) unique.add(value);
   }
   return Array.from(unique);
 }
@@ -501,8 +518,20 @@ export async function searchProducts(
   const first = plan.first ?? 5;
   const candidates = buildSearchCandidates(plan);
 
+  console.log(LOG_PREFIX_SEARCH, "search start", {
+    storeId: store.id,
+    originalQuery: plan.query,
+    candidates,
+    sortKey,
+    reverse,
+    first,
+  });
+
   let lastError: unknown;
-  for (const queryCandidate of candidates) {
+  let lastEmptyCandidate: string | null = null;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const queryCandidate = candidates[i];
     try {
       const data = await storefrontFetch<ShopifySearchProductsResponse>(store, PRODUCT_SEARCH_QUERY, {
         query: queryCandidate,
@@ -510,9 +539,42 @@ export async function searchProducts(
         sortKey,
         reverse,
       });
-      return mapProducts(store.shopDomain, data);
+      const edgeCount = data?.products?.edges?.length ?? 0;
+      const products = mapProducts(store.shopDomain, data);
+
+      console.log(LOG_PREFIX_SEARCH, "candidate result", {
+        query: queryCandidate,
+        edgeCount,
+        mappedCount: products.length,
+        titles: products.slice(0, 3).map((p) => p.title),
+      });
+
+      if (products.length > 0) {
+        if (queryCandidate !== plan.query) {
+          console.log(LOG_PREFIX_SEARCH, "resolved via fallback candidate", {
+            originalQuery: plan.query,
+            winningQuery: queryCandidate,
+          });
+        }
+        return products;
+      }
+
+      lastEmptyCandidate = queryCandidate;
+      const isLast = i === candidates.length - 1;
+      if (isLast) {
+        console.warn(LOG_PREFIX_SEARCH, "all candidates returned zero products", {
+          originalQuery: plan.query,
+          candidatesTried: candidates,
+          lastEmptyCandidate,
+        });
+        return products;
+      }
     } catch (error) {
       lastError = error;
+      console.warn(LOG_PREFIX_SEARCH, "candidate failed", {
+        query: queryCandidate,
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (!isRecoverableSearchError(error)) throw error;
     }
   }
